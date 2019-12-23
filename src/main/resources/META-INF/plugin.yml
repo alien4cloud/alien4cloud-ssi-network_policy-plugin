@@ -1,0 +1,14 @@
+id: alien4cloud-ssi-network_policy-plugin
+name: SSI Network policy plugin
+version: ${project.version}
+description: >
+  This plugin generates kubernetes network policies
+configuration_class: org.alien4cloud.plugin.ssi_network_policy.PluginConfiguration
+dependencies:
+  - alien4cloud-kubernetes-plugin
+  - alien4cloud-consul-publisher-plugin
+component_descriptors:
+  - bean_name: ssi-network_policy-modifier
+    name: SSI Network policy modifier
+    description: >
+      Modifier that generates kubernetes network policies
