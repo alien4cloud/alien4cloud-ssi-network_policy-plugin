@@ -33,6 +33,7 @@ import static org.alien4cloud.plugin.kubernetes.modifier.KubeTopologyUtils.K8S_T
 
 import org.springframework.stereotype.Component;
 import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.tuple.ImmutablePair;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -57,18 +58,18 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
     private final String DATASTORE_RELATIONSHIP = "artemis.relationships.pub.ConnectsToDataStore";
 
     // known datastores
-    private Map<String, String> dataStoreTypes = Stream.of(new Object[][] { 
-        { "artemis.redis.pub.capabilities.Redis", "redis" }, 
-        { "artemis.mongodb.pub.capabilities.MongoDb", "mongodb" }, 
-        { "artemis.mariadb.pub.capabilities.Mariadb", "mariadb" }, 
-        { "artemis.postgresql.pub.capabilities.PostgreSQLEndpoint", "postgre" },
-        { "artemis.accumulo.pub.capabilities.Accumulo", "accumulo" },
-        { "artemis.cassandra.pub.capabilities.CassandraDb", "cassandra" },
-        { "artemis.elasticsearch.pub.capabilities.ElasticSearchRestAPI", "elastic" },
-        { "artemis.kafka.pub.capabilities.KafkaTopic", "kafka" },
-        { "artemis.hadoop.pub.capabilities.HdfsRepository", "hdfs" },
-        { "artemis.ceph.pub.capabilities.CephBucketEndpoint", "ceph" }
-    }).collect(Collectors.toMap(data -> (String) data[0], data -> (String) data[1]));
+    private Map<String, ImmutablePair<String,String>> dataStoreTypes = Stream.of(new Object[][] { 
+        //{ "artemis.redis.pub.capabilities.Redis", "redis", "redis_endpoint" }, 
+        { "artemis.mongodb.pub.capabilities.MongoDb", "mongodb", "mongodb_endpoint" }, 
+        { "artemis.mariadb.pub.capabilities.Mariadb", "mariadb", "mariadb_endpoint" }, 
+        { "artemis.postgresql.pub.capabilities.PostgreSQLEndpoint", "postgre", "postgresql_endpoint" },
+        { "artemis.accumulo.pub.capabilities.Accumulo", "accumulo", "accumulo_endpoint" },
+        { "artemis.cassandra.pub.capabilities.CassandraDb", "cassandra", "cassandra_endpoint" },
+        { "artemis.elasticsearch.pub.capabilities.ElasticSearchRestAPI", "elastic", "http" },
+        { "artemis.kafka.pub.capabilities.KafkaTopic", "kafka", "kafka_topic" },
+        { "artemis.hadoop.pub.capabilities.HdfsRepository", "hdfs", "hdfs_repository" },
+        { "artemis.ceph.pub.capabilities.CephBucketEndpoint", "ceph", "http" }
+    }).collect(Collectors.toMap(data -> (String) data[0], data -> new ImmutablePair<String,String>((String) data[1], (String) data[2])));
 
     @Override
     @ToscaContextual
@@ -156,7 +157,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
               addLabel (spec, "expose-ihm", Boolean.toString(ihm));
               addLabel (spec, "expose-api", Boolean.toString(api));
               for (String ds : nodeDS) {
-                 addLabel (spec, "access-iad-" + ds, "true");
+                 addLabel (spec, ds, "true");
               }
               addLabel (spec, "access-iam", "false");
 
@@ -203,7 +204,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
        for (NodeTemplate containerNode : safe(containerNodes)) {
           NodeTemplate host = TopologyNavigationUtil.getImmediateHostTemplate(topology, containerNode);
           if (host == node) {
-             Set<String> oneDs = hasDataStoreRelationship(containerNode);
+             Set<String> oneDs = hasDataStoreRelationship(topology, containerNode);
              if (!oneDs.isEmpty()) {
                 ds.addAll(oneDs);
              }
@@ -216,13 +217,22 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
      * tests whether given node has relationship to datastore or not, 
      * if so return associated keyword
      **/
-    private Set<String> hasDataStoreRelationship (NodeTemplate node) {
+    private Set<String> hasDataStoreRelationship (Topology topology, NodeTemplate node) {
        Set<String> ds = new HashSet<String>();
        for (RelationshipTemplate relationshipTemplate : safe(node.getRelationships()).values()) {
           if (relationshipTemplate.getType().equals(DATASTORE_RELATIONSHIP)) {
-             String val = dataStoreTypes.get(relationshipTemplate.getRequirementType());
+             ImmutablePair<String,String> val = dataStoreTypes.get(relationshipTemplate.getRequirementType());
+             
              if (val != null) {
-                ds.add(val);
+                String access = val.getLeft();
+                String capa = val.getRight();
+                Capability endpoint = safe(topology.getNodeTemplates().get(relationshipTemplate.getTarget()).getCapabilities()).get(capa);
+                String instname = "default";
+                if (endpoint != null) {
+                   instname = PropertyUtil.getScalarValue(safe(endpoint.getProperties()).get("artemis_instance_name"));
+                }
+
+                ds.add("access-" + access + "--" + instname);
              }
           }
        }
@@ -343,17 +353,18 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
 
        if (ds) {
           for (String oneDS : allDS) {
+             String a4cds = oneDS.replaceAll("-","_");
              resource_spec = 
                  "apiVersion: networking.k8s.io/v1\n" +
                  "kind: NetworkPolicy\n" +
                  "metadata:\n" +
-                 "  name: a4c-iad-" + oneDS + "-policy\n" +
+                 "  name: a4c-" + oneDS + "-policy\n" +
                  "  labels:\n" + 
-                 "    a4c_id: a4c-iad-" + oneDS + "-policy\n" + 
+                 "    a4c_id: a4c-" + oneDS + "-policy\n" + 
                  "spec:\n" +
                  "  podSelector:\n" +
                  "    matchLabels:\n" +
-                 "      access-iad-" + oneDS + ": \"true\"\n" +
+                 "      " + oneDS + ": \"true\"\n" +
                  "  policyTypes:\n" +
                  "  - Egress\n" +
                  "  egress:\n" +
@@ -366,7 +377,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                  "        matchLabels:\n" +
                  "          pod-pf-role: iad\n"; 
 
-             generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_iad_" + oneDS + "_policy", "a4c-iad-" + oneDS + "-policy", configPV);
+             generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_" + a4cds + "_policy", "a4c-" + oneDS + "-policy", configPV);
           }
        }
 
