@@ -17,8 +17,10 @@ import org.alien4cloud.tosca.model.templates.PolicyTemplate;
 import org.alien4cloud.tosca.model.templates.RelationshipTemplate;
 import org.alien4cloud.tosca.model.templates.Requirement;
 import org.alien4cloud.tosca.model.templates.Topology;
+import org.alien4cloud.tosca.model.types.NodeType;
 import org.alien4cloud.tosca.model.types.RelationshipType;
 import org.alien4cloud.tosca.normative.constants.NormativeRelationshipConstants;
+import org.alien4cloud.tosca.utils.IRelationshipTypeFinder;
 import org.alien4cloud.tosca.utils.TopologyNavigationUtil;
 import org.alien4cloud.tosca.utils.ToscaTypeUtils;
 
@@ -94,9 +96,6 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
        /* get initial topology */
        Topology init_topology = (Topology)context.getExecutionCache().get(FlowExecutionContext.INITIAL_TOPOLOGY);
 
-       /* we are searching elements on initial topology */
-       ToscaContext.init(init_topology.getDependencies());
-
        Set<NodeTemplate> kubeClusterNodes = TopologyNavigationUtil.getNodesOfType(init_topology, K8S_TYPES_KUBE_CLUSTER, false);
        if ((kubeClusterNodes == null) || kubeClusterNodes.isEmpty()) {
           log.info("Not a kubernetes appli, nothing to do.");
@@ -104,8 +103,8 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
        }
 
        /* get consul publisher policies */
-       Set<PolicyTemplate> policiesIhm = TopologyNavigationUtil.getPoliciesOfType(init_topology, CONSULPUBLISHER_POLICY1, true);
-       Set<PolicyTemplate> policiesApi = TopologyNavigationUtil.getPoliciesOfType(init_topology, CONSULPUBLISHER_POLICY2, true);
+       Set<PolicyTemplate> policiesIhm = TopologyNavigationUtil.getPoliciesOfType(init_topology, CONSULPUBLISHER_POLICY1, false);
+       Set<PolicyTemplate> policiesApi = TopologyNavigationUtil.getPoliciesOfType(init_topology, CONSULPUBLISHER_POLICY2, false);
 
        /* keep kube config for network policies */
        AbstractPropertyValue configPV = null;
@@ -201,18 +200,19 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
     /**
      * tests whether given node uses datastore(s) or not
      **/
-    private Set<String> usesDataStore (NodeTemplate node, Topology topology) {
+    private Set<String> usesDataStore (NodeTemplate node, Topology init_topology) {
        Set<String> ds = new HashSet<String>();
        /**
         * input node is KubeDeployment
         * look for KubeContainer node hostedOn this node
         * look for relationship datastores on this KubeContainer node
         **/
-       Set<NodeTemplate> containerNodes = TopologyNavigationUtil.getNodesOfType(topology, K8S_TYPES_KUBECONTAINER, true);
+       ToscaContext.Context toscaContext = new ToscaContext.Context(init_topology.getDependencies());
+       Set<NodeTemplate> containerNodes = getNodesOfType(init_topology, K8S_TYPES_KUBECONTAINER, toscaContext);
        for (NodeTemplate containerNode : safe(containerNodes)) {
-          NodeTemplate host = TopologyNavigationUtil.getImmediateHostTemplate(topology, containerNode);
+          NodeTemplate host = getImmediateHostTemplate(init_topology, containerNode, toscaContext);
           if (host == node) {
-             Set<String> oneDs = hasDataStoreRelationship(topology, containerNode);
+             Set<String> oneDs = hasDataStoreRelationship(init_topology, containerNode);
              if (!oneDs.isEmpty()) {
                 ds.addAll(oneDs);
              }
@@ -487,6 +487,46 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
             }
         }
         return K8S_CSAR_VERSION;
+    }
+
+    /**
+     * methods inspired by TopologyNavigationUtils, here we use a toscaContext set on initial topology
+     **/
+    private Set<NodeTemplate> getNodesOfType(Topology topology, String type, ToscaContext.Context toscaContext) {
+        Set<NodeTemplate> result = new HashSet<NodeTemplate>();
+        for (NodeTemplate nodeTemplate : safe(topology.getNodeTemplates()).values()) {
+            if (nodeTemplate.getType().equals(type)) {
+                result.add(nodeTemplate);
+            } else {
+                NodeType nodeType = toscaContext.getElement(NodeType.class, nodeTemplate.getType(), false);
+                if (nodeType.getDerivedFrom().contains(type)) {
+                    result.add(nodeTemplate);
+                }
+            }
+        }
+        return result;
+    }
+
+    private NodeTemplate getImmediateHostTemplate(Topology topology, NodeTemplate template, ToscaContext.Context toscaContext) {
+        RelationshipTemplate host = getRelationshipFromType(template, NormativeRelationshipConstants.HOSTED_ON, toscaContext);
+        if (host == null) {
+            return null;
+        }
+        return topology.getNodeTemplates().get(host.getTarget());
+    }
+
+    private RelationshipTemplate getRelationshipFromType(NodeTemplate template, String type, ToscaContext.Context toscaContext) {
+        return getRelationshipFromType(template, type, id -> toscaContext.getElement(RelationshipType.class, id, true));
+    }
+
+    private RelationshipTemplate getRelationshipFromType(NodeTemplate template, String type, IRelationshipTypeFinder toscaTypeFinder) {
+        for (RelationshipTemplate relationshipTemplate : safe(template.getRelationships()).values()) {
+            RelationshipType relationshipType = toscaTypeFinder.findElement(relationshipTemplate.getType());
+            if (relationshipType != null && ToscaTypeUtils.isOfType(relationshipType, type)) {
+                return relationshipTemplate;
+            }
+        }
+        return null;
     }
 
 }
