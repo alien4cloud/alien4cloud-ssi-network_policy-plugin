@@ -9,7 +9,7 @@ import alien4cloud.utils.PropertyUtil;
 import org.alien4cloud.alm.deployment.configuration.flow.FlowExecutionContext;
 import org.alien4cloud.alm.deployment.configuration.flow.TopologyModifierSupport;
 import org.alien4cloud.tosca.model.CSARDependency;
-import org.alien4cloud.tosca.model.definitions.AbstractPropertyValue;
+import org.alien4cloud.tosca.model.definitions.ComplexPropertyValue;
 import org.alien4cloud.tosca.model.definitions.ScalarPropertyValue;
 import org.alien4cloud.tosca.model.templates.Capability;
 import org.alien4cloud.tosca.model.templates.NodeTemplate;
@@ -33,6 +33,7 @@ import static org.alien4cloud.plugin.kubernetes.modifier.KubernetesAdapterModifi
 import static org.alien4cloud.plugin.kubernetes.modifier.KubernetesAdapterModifier.NAMESPACE_RESOURCE_NAME;
 import static org.alien4cloud.plugin.kubernetes.modifier.KubeTopologyUtils.K8S_TYPES_DEPLOYMENT_RESOURCE;
 import static org.alien4cloud.plugin.kubernetes.modifier.KubeTopologyUtils.K8S_TYPES_SIMPLE_RESOURCE;
+import static alien4cloud.plugin.k8s.spark.jobs.modifier.SparkJobsModifier.K8S_TYPES_SPARK_JOBS;
 
 import org.springframework.stereotype.Component;
 import org.apache.commons.lang.StringUtils;
@@ -45,6 +46,7 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -102,12 +104,12 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
           return;
        }
 
+       /* get kube config for network policies */
+       String k8sYamlConfig = (String)context.getExecutionCache().get(K8S_TYPES_KUBE_CLUSTER);
+
        /* get consul publisher policies */
        Set<PolicyTemplate> policiesIhm = TopologyNavigationUtil.getPoliciesOfType(init_topology, CONSULPUBLISHER_POLICY1, false);
        Set<PolicyTemplate> policiesApi = TopologyNavigationUtil.getPoliciesOfType(init_topology, CONSULPUBLISHER_POLICY2, false);
-
-       /* keep kube config for network policies */
-       AbstractPropertyValue configPV = null;
 
        boolean hasDs = false,
                hasIhm = false,
@@ -120,9 +122,6 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
        for (NodeTemplate node: safe(kubeNodes)) {
           log.info("Processing node " + node.getName());
 
-          /* any kube config will do */
-          configPV = node.getProperties().get("kube_config");
-  
           boolean ihm = false,
                   api = false;
           Set<String> nodeDS = new HashSet<String>();
@@ -174,6 +173,26 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
           }
        }
 
+       /* process SparkJobs nodes */
+       Set<NodeTemplate> jobsNodes = TopologyNavigationUtil.getNodesOfType(topology, K8S_TYPES_SPARK_JOBS, true);
+       for (NodeTemplate node: safe(jobsNodes)) {
+          log.info("Processing node " + node.getName());
+
+          Set<String> nodeDS = hasDerivedDataStoreRelationship (topology, node);
+          if (!nodeDS.isEmpty()) {
+             log.info (node.getName() + " uses datastore(s).");
+             hasDs = true;
+             allDS.addAll(nodeDS);
+          }
+          addLabel2Job (topology, node, "pod-pf-role", "module");
+          addLabel2Job (topology, node, "expose-ihm", "false");
+          addLabel2Job (topology, node,"expose-api", "false");
+          for (String ds : nodeDS) {
+             addLabel2Job (topology, node, ds, "true");
+          }
+          addLabel2Job (topology, node, "access-iam", "false");
+       }
+
        /* get info on namespace if any */
        String namespace = null,
               zds = null;
@@ -192,13 +211,13 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
 
        if ((namespace != null) && !namespace.trim().equals("") &&
            (zds != null) && !zds.trim().equals("") ) {
-          generateNetworkPolicies (topology, namespace, zds, configPV, kubeNodes, 
-                                   hasDs, allDS, hasIhm, hasApi, ihmPorts, apiPorts);
+          generateNetworkPolicies (topology, namespace, zds, k8sYamlConfig, kubeNodes, 
+                                   hasDs, allDS, hasIhm, hasApi, ihmPorts, apiPorts, kubeNS.getName());
        }
     }
 
     /**
-     * tests whether given node uses datastore(s) or not
+     * tests whether given deployment node uses datastore(s) or not
      **/
     private Set<String> usesDataStore (NodeTemplate node, Topology init_topology) {
        Set<String> ds = new HashSet<String>();
@@ -229,6 +248,29 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
        Set<String> ds = new HashSet<String>();
        for (RelationshipTemplate relationshipTemplate : safe(node.getRelationships()).values()) {
           if (relationshipTemplate.getType().equals(DATASTORE_RELATIONSHIP)) {
+             ImmutablePair<String,String> val = dataStoreTypes.get(relationshipTemplate.getRequirementType());
+             
+             if (val != null) {
+                String access = val.getLeft();
+                String capa = val.getRight();
+                Capability endpoint = safe(topology.getNodeTemplates().get(relationshipTemplate.getTarget()).getCapabilities()).get(capa);
+                String instname = "default";
+                if (endpoint != null) {
+                   instname = PropertyUtil.getScalarValue(safe(endpoint.getProperties()).get("artemis_instance_name"));
+                }
+
+                ds.add("access-" + access + "--" + instname);
+             }
+          }
+       }
+       return ds;
+    }
+
+    private Set<String> hasDerivedDataStoreRelationship (Topology topology, NodeTemplate node) {
+       Set<String> ds = new HashSet<String>();
+       for (RelationshipTemplate relationshipTemplate : safe(node.getRelationships()).values()) {
+          RelationshipType reltype = ToscaContext.getOrFail(RelationshipType.class, relationshipTemplate.getType());
+          if (ToscaTypeUtils.isOfType (reltype, DATASTORE_RELATIONSHIP)) {
              ImmutablePair<String,String> val = dataStoreTypes.get(relationshipTemplate.getRequirementType());
              
              if (val != null) {
@@ -299,11 +341,24 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
     }
 
     /**
+     * add label to job node labels 
+     **/
+    private void addLabel2Job(Topology topology, NodeTemplate node, String key, String value) {
+       ComplexPropertyValue labelsPV = (ComplexPropertyValue)safe(node.getProperties()).get("labels");
+       Map<String,Object> labels = new HashMap<String,Object>();
+       if (labelsPV != null) {
+          labels = labelsPV.getValue();
+       }
+       labels.put (key, new ScalarPropertyValue(value));
+       setNodePropertyPathValue(null, topology, node, "labels", new ComplexPropertyValue(labels));
+    }
+
+    /**
      * generate all required network policies for namespace 
      **/
-    private void generateNetworkPolicies (Topology topology, String namespace, String zds, AbstractPropertyValue configPV,
+    private void generateNetworkPolicies (Topology topology, String namespace, String zds, String config,
                                           Set<NodeTemplate> deployNodes, boolean ds, Set<String> allDS, boolean ihm, boolean api,
-                                          List<Integer> ihmPorts, List<Integer> apiPorts) {
+                                          List<Integer> ihmPorts, List<Integer> apiPorts, String nsNodeName) {
        String resource_spec = 
               "apiVersion: networking.k8s.io/v1\n" +
               "kind: NetworkPolicy\n" +
@@ -320,7 +375,8 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
               "    - namespaceSelector:\n" +
               "        matchLabels:\n" +
               "          ns-clef-namespace: " + namespace;
-       generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_default_in_policy", "a4c-default-in-policy", configPV);
+       generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_default_in_policy", "a4c-default-in-policy", 
+                                 config, nsNodeName);
 
        resource_spec = 
               "apiVersion: networking.k8s.io/v1\n" +
@@ -338,7 +394,8 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
               "    - namespaceSelector:\n" +
               "        matchLabels:\n" +
               "          ns-clef-namespace: " + namespace;
-       generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_default_eg_policy", "a4c-default-eg-policy", configPV);
+       generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_default_eg_policy", "a4c-default-eg-policy", 
+                                 config, nsNodeName);
        
        resource_spec = 
               "apiVersion: networking.k8s.io/v1\n" +
@@ -356,7 +413,8 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
               "          ns-clef-namespace: kube-system\n" +
               "  policyTypes:\n" +
               "  - Ingress\n";
-       generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_kube_system_policy", "a4c-kube-system-policy", configPV);
+       generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_kube_system_policy", "a4c-kube-system-policy", 
+                                 config, nsNodeName);
 
 
        if (ds) {
@@ -385,7 +443,8 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                  "        matchLabels:\n" +
                  "          pod-pf-role: iad\n"; 
 
-             generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_" + a4cds + "_policy", "a4c-" + oneDS + "-policy", configPV);
+             generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_" + a4cds + "_policy", "a4c-" + oneDS + "-policy", 
+                                       config, nsNodeName);
           }
        }
 
@@ -417,7 +476,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
              resource_spec += "       - port: " + port.toString() + "\n";
           }
 
-          generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_ihm_policy", "a4c-ihm-policy", configPV);
+          generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_ihm_policy", "a4c-ihm-policy", config, nsNodeName);
        }
 
        if (api) {
@@ -448,7 +507,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
              resource_spec += "       - port: " + port.toString() + "\n";
           }
 
-          generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_api_policy", "a4c-api-policy", configPV);
+          generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_api_policy", "a4c-api-policy", config, nsNodeName);
        }
     }
 
@@ -456,13 +515,13 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
      * generate a network policies for namespace 
      **/
     private void generateOneNetworkPolicy (Topology topology, Set<NodeTemplate> deployNodes, String resource_spec, String policyNodeName,
-                                           String policyName, AbstractPropertyValue configPV) {
+                                           String policyName, String config, String nsNodeName) {
        /* create SimpleResource with props resource_id, resource_type, resource_spec and kube_config */
        NodeTemplate polResourceNode = addNodeTemplate(null, topology, policyNodeName, K8S_TYPES_SIMPLE_RESOURCE, getK8SCsarVersion(topology));
 
        setNodePropertyPathValue(null, topology, polResourceNode, "resource_id", new ScalarPropertyValue(policyName));
        setNodePropertyPathValue(null, topology, polResourceNode, "resource_type", new ScalarPropertyValue("networkpolicy"));
-       setNodePropertyPathValue(null, topology, polResourceNode, "kube_config", configPV);
+       setNodePropertyPathValue(null, topology, polResourceNode, "kube_config", new ScalarPropertyValue(config));
        setNodePropertyPathValue(null, topology, polResourceNode, "resource_spec", new ScalarPropertyValue(resource_spec));
 
        /* add relations */
@@ -475,6 +534,9 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                                     "dependency",
                                     "feature");
        }
+
+       /* add relation to namespace node */
+       addRelationshipTemplate(null, topology, polResourceNode, nsNodeName, NormativeRelationshipConstants.DEPENDS_ON, "dependency", "feature");
     }
 
     /**
