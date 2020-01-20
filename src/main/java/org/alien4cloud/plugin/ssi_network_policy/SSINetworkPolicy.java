@@ -528,8 +528,8 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
        for (NodeTemplate deploymentResourceNode : safe(deployNodes)) {
            addRelationshipTemplate (null,
                                     topology,
-                                    polResourceNode,
-                                    deploymentResourceNode.getName(),
+                                    deploymentResourceNode,
+                                    policyNodeName,
                                     NormativeRelationshipConstants.DEPENDS_ON,
                                     "dependency",
                                     "feature");
