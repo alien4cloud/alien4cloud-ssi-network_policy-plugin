@@ -78,10 +78,10 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
     }).collect(Collectors.toMap(data -> (String) data[0], data -> new ImmutablePair<String,String>((String) data[1], (String) data[2])));
 
     // external datastores
-    private Map<String, String> externalDataStoreTypes = Stream.of(new Object[][] {
-        { "artemis.nexus.pub.nodes.NexusService", "nexus_endpoint"},
-        { "artemis.gitlab.pub.nodes.GitlabService", "gitlab_endpoint" }
-    }).collect(Collectors.toMap(data -> (String) data[0], data -> (String) data[1]));
+    private Map<String, ImmutablePair<String,String>> externalDataStoreTypes = Stream.of(new Object[][] {
+        { "artemis.nexus.pub.nodes.NexusService", "nexus", "nexus_endpoint"},
+        { "artemis.gitlab.pub.nodes.GitlabService", "gitlab", "gitlab_endpoint" }
+    }).collect(Collectors.toMap(data -> (String) data[0], data -> new ImmutablePair<String,String>((String) data[1], (String) data[2])));
 
 
     @Override
@@ -126,7 +126,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
        List<Integer> ihmPorts = new ArrayList<Integer>();
        List<Integer> apiPorts = new ArrayList<Integer>();
        Set<String> allDS = new HashSet<String>();
-       List<ImmutablePair<String,String>> externalDS = new ArrayList<ImmutablePair<String,String>>();
+       Map<String, Set<ImmutablePair<String,String>>> externalDSipAndPorts = new HashMap<String, Set<ImmutablePair<String,String>>>();
 
        /* process all kube deployment resources nodes */
        for (NodeTemplate node: safe(kubeNodes)) {
@@ -135,7 +135,8 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
           boolean ihm = false,
                   api = false;
           Set<String> nodeDS = new HashSet<String>();
-          List<ImmutablePair<String,String>> nodeXDS = new ArrayList<ImmutablePair<String,String>>();
+          Set<String> nodeXDSnames = new HashSet<String>();
+          Set<ImmutablePair<String,String>> nodeXDS = new HashSet<ImmutablePair<String,String>>();
 
           /* look for node in initial topology */
           String initialNodeName  = TopologyModifierSupport.getNodeTagValueOrNull(node, A4C_KUBERNETES_ADAPTER_MODIFIER_TAG_REPLACEMENT_NODE_FOR);
@@ -164,11 +165,19 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                 hasApi = true;
                 apiPorts.add(port);
              }
-             nodeXDS = usesExternalDataSore (initialNode, node, init_topology);
-             if (!nodeXDS.isEmpty()) {
-                log.info (node.getName() + " uses external datastore(s).");
-                hasExternalDs = true;
-                externalDS.addAll(nodeXDS);
+             for (ImmutablePair<String,String> xdsPair : externalDataStoreTypes.values()) {
+                String xDS = xdsPair.getLeft();
+                nodeXDS = usesExternalDataSore (initialNode, init_topology, xDS);
+                if (!nodeXDS.isEmpty()) {
+                   log.info (node.getName() + " uses " + xDS + " external datastore(s).");
+                   hasExternalDs = true;
+                   nodeXDSnames.add(xDS);
+                   if (externalDSipAndPorts.get(xDS) == null) {
+                      externalDSipAndPorts.put(xDS, nodeXDS);
+                   } else {
+                      externalDSipAndPorts.get(xDS).addAll(nodeXDS);
+                   }
+                }
              }
           }
 
@@ -183,6 +192,14 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                  addLabel (spec, ds, "true");
               }
               addLabel (spec, "access-iam", "false");
+              for (ImmutablePair<String,String> xdsPair : externalDataStoreTypes.values()) {
+                 String xDS = xdsPair.getLeft();
+                 if (nodeXDSnames.contains(xDS)) {
+                    addLabel (spec, "access-ext-" + xDS, "true");
+                 } else {
+                    addLabel (spec, "access-ext-" + xDS, "false");
+                 }
+              }
 
               specProp.setValue(mapper.writeValueAsString(spec));
           } catch(IOException e) {
@@ -208,6 +225,10 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
              addLabel2Job (topology, node, ds, "true");
           }
           addLabel2Job (topology, node, "access-iam", "false");
+          for (ImmutablePair<String,String> xdsPair : externalDataStoreTypes.values()) {
+             String xDS = xdsPair.getLeft();
+             addLabel2Job (topology, node, "access-ext-" + xDS, "false");
+          }
        }
 
        /* get info on namespace if any */
@@ -230,15 +251,15 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
            (zds != null) && !zds.trim().equals("") ) {
           generateNetworkPolicies (topology, namespace, zds, k8sYamlConfig, kubeNodes, 
                                    hasDs, allDS, hasIhm, hasApi, ihmPorts, apiPorts, 
-                                   hasExternalDs, externalDS, kubeNS.getName());
+                                   hasExternalDs, externalDSipAndPorts, kubeNS.getName());
        }
     }
 
     /**
      * tests whether given deployment node uses external datastore(s) or not
      **/
-    private List<ImmutablePair<String,String>> usesExternalDataSore (NodeTemplate node, NodeTemplate finalNode, Topology init_topology) {
-       List<ImmutablePair<String,String>> ds = new ArrayList<ImmutablePair<String,String>>();
+    private Set<ImmutablePair<String,String>> usesExternalDataSore (NodeTemplate node, Topology init_topology, String xds) {
+       Set<ImmutablePair<String,String>> ds = new HashSet<ImmutablePair<String,String>>();
        /**
         * input node is KubeDeployment
         * look for KubeContainer node hostedOn this node
@@ -249,7 +270,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
        for (NodeTemplate containerNode : safe(containerNodes)) {
           NodeTemplate host = getImmediateHostTemplate(init_topology, containerNode, toscaContext);
           if (host == node) {
-             List<ImmutablePair<String,String>> oneDs = hasExternalDataStoreRelationship(init_topology, containerNode, finalNode);
+             Set<ImmutablePair<String,String>> oneDs = hasExternalDataStoreRelationship(init_topology, containerNode, xds);
              if (!oneDs.isEmpty()) {
                 ds.addAll(oneDs);
              }
@@ -259,38 +280,38 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
     }
 
     /**
-     * tests whether given node has relationship to external datastore or not,
-     * if so return associated app/ip
+     * tests whether given node has relationship to given external datastore or not,
+     * if so return associated port and ip
      **/
-    private List<ImmutablePair<String,String>> hasExternalDataStoreRelationship (Topology init_topology, NodeTemplate node, NodeTemplate finalNode) {
-       List<ImmutablePair<String,String>> ds = new ArrayList<ImmutablePair<String,String>>();
+    private Set<ImmutablePair<String,String>> hasExternalDataStoreRelationship (Topology init_topology, NodeTemplate node, String xds) {
+       Set<ImmutablePair<String,String>> ds = new HashSet<ImmutablePair<String,String>>();
 
-       /* get app value from  final node */
-       String app = "???";
-       ScalarPropertyValue specProp = (ScalarPropertyValue) finalNode.getProperties().get("resource_spec");
-       try {
-           ObjectNode spec = (ObjectNode) mapper.readTree(PropertyUtil.getScalarValue(specProp));
-           app = spec.with("spec").with("template").with("metadata").with("labels").get("app").textValue();
-       } catch(IOException e) {
-           log.error("Can't parse json: {}",e);
-       }
-
-       /* parse relations on initial node */
        for (RelationshipTemplate relationshipTemplate : safe(node.getRelationships()).values()) {
           if (relationshipTemplate.getType().equals(NormativeRelationshipConstants.CONNECTS_TO)) {
              NodeTemplate target = init_topology.getNodeTemplates().get(relationshipTemplate.getTarget());
-             String capa = externalDataStoreTypes.get(target.getType());
-             if (capa != null) {
+             ImmutablePair<String,String> val = externalDataStoreTypes.get(target.getType());
+             if ((val != null) && val.getLeft().equals(xds)) {
                 String ip = null;
+                String port = "80";
                 if (target instanceof ServiceNodeTemplate) {
                    ServiceNodeTemplate serviceNodeTemplate = (ServiceNodeTemplate)target;
-                   ip = safe(serviceNodeTemplate.getAttributeValues()).get("capabilities." + capa + ".ip_address");
+                   ip = safe(serviceNodeTemplate.getAttributeValues()).get("capabilities." + val.getRight() + ".ip_address");
+
+                   /* get port from capability properties of service */
+                   Capability endpoint = safe(serviceNodeTemplate.getCapabilities()).get(val.getRight());
+                   if (endpoint != null) {
+                      String pport = PropertyUtil.getScalarValue(safe(endpoint.getProperties()).get("port"));
+                      if (StringUtils.isNotEmpty(pport)) {
+                         port = pport;
+                      }
+                   }
                 }
                 if (StringUtils.isEmpty(ip)) {
                    ip = "127.0.0.1";
                 }
                 ip = ip + "/32";
-                ds.add(new ImmutablePair<String, String> (app, ip));
+
+                ds.add(new ImmutablePair<String, String> (ip, port));
              }
           }
        }
@@ -444,7 +465,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
     private void generateNetworkPolicies (Topology topology, String namespace, String zds, String config,
                                           Set<NodeTemplate> deployNodes, boolean ds, Set<String> allDS, boolean ihm, boolean api,
                                           List<Integer> ihmPorts, List<Integer> apiPorts, 
-                                          boolean xds, List<ImmutablePair<String,String>> externalDS,
+                                          boolean xds, Map<String, Set<ImmutablePair<String,String>>> externalDS,
                                           String nsNodeName) {
        String resource_spec = 
               "apiVersion: networking.k8s.io/v1\n" +
@@ -599,30 +620,34 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
 
        if (xds) {
           int count = 0;
-          for (ImmutablePair<String,String> oneDS : externalDS) {
-             count++;
-             String app = oneDS.getLeft();
-             String ip = oneDS.getRight();
-             resource_spec = 
-                 "apiVersion: networking.k8s.io/v1\n" +
-                 "kind: NetworkPolicy\n" +
-                 "metadata:\n" +
-                 "  name: a4c-eg-ext-" + count + "-policy\n" +
-                 "  labels:\n" + 
-                 "    a4c_id: a4c-eg-ext-" + count + "-policy\n" + 
-                 "spec:\n" +
-                 "  podSelector:\n" +
-                 "    matchLabels:\n" +
-                 "      app: " + app + "\n" +
-                 "  policyTypes:\n" +
-                 "  - Egress\n" +
-                 "  egress:\n" +
-                 "  - to:\n" +
-                 "    - ipBlock:\n" +
-                 "        cidr: " + ip + "\n"; 
+          for (String xdsname : externalDS.keySet()) {
+             for (ImmutablePair<String, String> ipAndPort : externalDS.get(xdsname)) {
+                count++;
+                String ip = ipAndPort.getLeft();
+                String port = ipAndPort.getRight();
+                resource_spec = 
+                    "apiVersion: networking.k8s.io/v1\n" +
+                    "kind: NetworkPolicy\n" +
+                    "metadata:\n" +
+                    "  name: a4c-eg-ext-" + count + "-policy\n" +
+                    "  labels:\n" + 
+                    "    a4c_id: a4c-eg-ext-" + count + "-policy\n" + 
+                    "spec:\n" +
+                    "  podSelector:\n" +
+                    "    matchLabels:\n" +
+                    "      access-ext-" + xdsname + ": \"true\"\n" +
+                    "  policyTypes:\n" +
+                    "  - Egress\n" +
+                    "  egress:\n" +
+                    "  - to:\n" +
+                    "    - ipBlock:\n" +
+                    "        cidr: " + ip + "\n" +
+                    "    ports:\n" +
+                    "        - port: " + port + "\n";
 
-             generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_eg_ext_" + count + "_policy", "a4c-eg-ext-" + count + "-policy", 
+                generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_eg_ext_" + count + "_policy", "a4c-eg-ext-" + count + "-policy", 
                                        config, nsNodeName);
+             }
           }
        }
 
