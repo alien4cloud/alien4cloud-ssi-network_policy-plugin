@@ -227,7 +227,19 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
           addLabel2Job (topology, node, "access-iam", "false");
           for (ImmutablePair<String,String> xdsPair : externalDataStoreTypes.values()) {
              String xDS = xdsPair.getLeft();
-             addLabel2Job (topology, node, "access-ext-" + xDS, "false");
+             Set<ImmutablePair<String,String>> nodeXDS = hasExternalDataStoreRelationship(topology, node, xDS);
+             if (!nodeXDS.isEmpty()) {
+                log.info (node.getName() + " uses " + xDS + " external datastore(s).");
+                hasExternalDs = true;
+                if (externalDSipAndPorts.get(xDS) == null) {
+                   externalDSipAndPorts.put(xDS, nodeXDS);
+                } else {
+                   externalDSipAndPorts.get(xDS).addAll(nodeXDS);
+                }
+                addLabel2Job (topology, node, "access-ext-" + xDS, "true");
+             } else {
+                addLabel2Job (topology, node, "access-ext-" + xDS, "false");
+             }
           }
        }
 
