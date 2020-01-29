@@ -299,7 +299,8 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
        Set<ImmutablePair<String,String>> ds = new HashSet<ImmutablePair<String,String>>();
 
        for (RelationshipTemplate relationshipTemplate : safe(node.getRelationships()).values()) {
-          if (relationshipTemplate.getType().equals(NormativeRelationshipConstants.CONNECTS_TO)) {
+          RelationshipType reltype = ToscaContext.getOrFail(RelationshipType.class, relationshipTemplate.getType());
+          if (ToscaTypeUtils.isOfType (reltype, NormativeRelationshipConstants.CONNECTS_TO)) {
              NodeTemplate target = init_topology.getNodeTemplates().get(relationshipTemplate.getTarget());
              ImmutablePair<String,String> val = externalDataStoreTypes.get(target.getType());
              if ((val != null) && val.getLeft().equals(xds)) {
