@@ -299,7 +299,8 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
        Set<ImmutablePair<String,String>> ds = new HashSet<ImmutablePair<String,String>>();
 
        for (RelationshipTemplate relationshipTemplate : safe(node.getRelationships()).values()) {
-          RelationshipType reltype = ToscaContext.getOrFail(RelationshipType.class, relationshipTemplate.getType());
+          ToscaContext.Context toscaContext = new ToscaContext.Context(init_topology.getDependencies());
+          RelationshipType reltype = toscaContext.getElement(RelationshipType.class, relationshipTemplate.getType(), false);
           if (ToscaTypeUtils.isOfType (reltype, NormativeRelationshipConstants.CONNECTS_TO)) {
              NodeTemplate target = init_topology.getNodeTemplates().get(relationshipTemplate.getTarget());
              ImmutablePair<String,String> val = externalDataStoreTypes.get(target.getType());
@@ -695,7 +696,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
     }
 
     /**
-     * get CSAT version from dependencies if any
+     * get CSAR version from dependencies if any
      **/
     private String getK8SCsarVersion(Topology topology) {
         for (CSARDependency dep : topology.getDependencies()) {
