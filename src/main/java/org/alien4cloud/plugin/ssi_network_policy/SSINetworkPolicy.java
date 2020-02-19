@@ -62,6 +62,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
     private final ObjectMapper mapper = new ObjectMapper();
 
     private final String DATASTORE_RELATIONSHIP = "artemis.relationships.pub.ConnectsToDataStore";
+    private final String RELATIONSHIP_TYPE_TO_EXPLORE = "org.alien4cloud.relationships.ConnectsToStaticEndpoint";
 
     // known datastores
     private Map<String, ImmutablePair<String,String>> dataStoreTypes = Stream.of(new Object[][] { 
@@ -347,35 +348,9 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
        for (NodeTemplate containerNode : safe(containerNodes)) {
           NodeTemplate host = getImmediateHostTemplate(init_topology, containerNode, toscaContext);
           if (host == node) {
-             Set<String> oneDs = hasDataStoreRelationship(init_topology, containerNode);
+             Set<String> oneDs = hasDerivedDataStoreRelationship(init_topology, containerNode);
              if (!oneDs.isEmpty()) {
                 ds.addAll(oneDs);
-             }
-          }
-       }
-       return ds;
-    }
-
-    /**
-     * tests whether given node has relationship to datastore or not, 
-     * if so return associated keyword
-     **/
-    private Set<String> hasDataStoreRelationship (Topology topology, NodeTemplate node) {
-       Set<String> ds = new HashSet<String>();
-       for (RelationshipTemplate relationshipTemplate : safe(node.getRelationships()).values()) {
-          if (relationshipTemplate.getType().equals(DATASTORE_RELATIONSHIP)) {
-             ImmutablePair<String,String> val = dataStoreTypes.get(relationshipTemplate.getRequirementType());
-             
-             if (val != null) {
-                String access = val.getLeft();
-                String capa = val.getRight();
-                Capability endpoint = safe(topology.getNodeTemplates().get(relationshipTemplate.getTarget()).getCapabilities()).get(capa);
-                String instname = "default";
-                if (endpoint != null) {
-                   instname = PropertyUtil.getScalarValue(safe(endpoint.getProperties()).get("artemis_instance_name"));
-                }
-
-                ds.add("access-" + access + "--" + instname);
              }
           }
        }
@@ -387,10 +362,12 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
      * if so return associated keyword
      **/
     private Set<String> hasDerivedDataStoreRelationship (Topology topology, NodeTemplate node) {
+       ToscaContext.Context toscaContext = new ToscaContext.Context(topology.getDependencies());
        Set<String> ds = new HashSet<String>();
        for (RelationshipTemplate relationshipTemplate : safe(node.getRelationships()).values()) {
-          RelationshipType reltype = ToscaContext.getOrFail(RelationshipType.class, relationshipTemplate.getType());
-          if (ToscaTypeUtils.isOfType (reltype, DATASTORE_RELATIONSHIP)) {
+          RelationshipType reltype = toscaContext.getElement(RelationshipType.class, relationshipTemplate.getType(), false);
+          if (ToscaTypeUtils.isOfType (reltype, DATASTORE_RELATIONSHIP) ||
+              ToscaTypeUtils.isOfType (reltype, RELATIONSHIP_TYPE_TO_EXPLORE)) {
              ImmutablePair<String,String> val = dataStoreTypes.get(relationshipTemplate.getRequirementType());
              
              if (val != null) {
