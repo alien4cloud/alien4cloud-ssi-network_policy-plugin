@@ -104,6 +104,22 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
     private void doProcess(Topology topology, FlowExecutionContext context) {
        Set<NodeTemplate> kubeNodes = TopologyNavigationUtil.getNodesOfType(topology, K8S_TYPES_DEPLOYMENT_RESOURCE, true);
 
+       /* get info on namespace if any */
+       String namespace = null,
+              zds = null;
+       NodeTemplate kubeNS = topology.getNodeTemplates().get((String)context.getExecutionCache().get(NAMESPACE_RESOURCE_NAME));
+       if (kubeNS != null) {
+          namespace = PropertyUtil.getScalarValue(kubeNS.getProperties().get("resource_id"));
+          try {
+              ObjectNode spec = (ObjectNode) mapper.readTree(PropertyUtil.getScalarValue(kubeNS.getProperties().get("resource_spec")));
+              zds = spec.with("metadata").with("labels").get("ns-zone-de-sensibilite").textValue();
+          } catch(Exception e) {
+              log.info("Can't find ns-zone-de-sensibilite");
+          }
+       } else {
+          log.info ("No namespace");
+       }
+
        /* get initial topology */
        Topology init_topology = (Topology)context.getExecutionCache().get(FlowExecutionContext.INITIAL_TOPOLOGY);
 
@@ -202,6 +218,9 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                  }
               }
 
+              spec.with("spec").with("template").with("spec").putObject("dnsConfig").putArray("searches")
+                    .add ("pf-don--tunnel-iad-" + zds.replaceAll("_","-") + ".svc.cluster.local");
+
               specProp.setValue(mapper.writeValueAsString(spec));
           } catch(IOException e) {
               log.error("Can't parse json: {}",e);
@@ -242,22 +261,6 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                 addLabel2Job (topology, node, "access-ext-" + xDS, "false");
              }
           }
-       }
-
-       /* get info on namespace if any */
-       String namespace = null,
-              zds = null;
-       NodeTemplate kubeNS = topology.getNodeTemplates().get((String)context.getExecutionCache().get(NAMESPACE_RESOURCE_NAME));
-       if (kubeNS != null) {
-          namespace = PropertyUtil.getScalarValue(kubeNS.getProperties().get("resource_id"));
-          try {
-              ObjectNode spec = (ObjectNode) mapper.readTree(PropertyUtil.getScalarValue(kubeNS.getProperties().get("resource_spec")));
-              zds = spec.with("metadata").with("labels").get("ns-zone-de-sensibilite").textValue();
-          } catch(Exception e) {
-              log.info("Can't find ns-zone-de-sensibilite");
-          }
-       } else {
-          log.info ("No namespace");
        }
 
        if ((namespace != null) && !namespace.trim().equals("") &&
