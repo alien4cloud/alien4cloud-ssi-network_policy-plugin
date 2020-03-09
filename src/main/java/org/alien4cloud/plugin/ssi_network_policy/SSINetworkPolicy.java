@@ -218,8 +218,10 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                  }
               }
 
-              spec.with("spec").with("template").with("spec").putObject("dnsConfig").putArray("searches")
-                    .add ("pf-don--tunnel-iad-" + zds.replaceAll("_","-") + ".svc.cluster.local");
+              if ((zds != null) && !zds.trim().equals("")) {
+                 spec.with("spec").with("template").with("spec").putObject("dnsConfig").putArray("searches")
+                     .add ("pf-don--tunnel-iad-" + zds.replaceAll("_","-") + ".svc.cluster.local");
+              }
 
               specProp.setValue(mapper.writeValueAsString(spec));
           } catch(IOException e) {
