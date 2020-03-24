@@ -384,7 +384,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                    instname = PropertyUtil.getScalarValue(safe(endpoint.getProperties()).get("artemis_instance_name"));
                 }
 
-                ds.add("access-" + access + "--" + instname);
+                ds.add(access + "--" + instname);
              }
           }
        }
@@ -534,7 +534,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                  "spec:\n" +
                  "  podSelector:\n" +
                  "    matchLabels:\n" +
-                 "      " + oneDS + ": \"true\"\n" +
+                 "      access-" + oneDS + ": \"true\"\n" +
                  "  policyTypes:\n" +
                  "  - Egress\n" +
                  "  egress:\n" +
@@ -543,9 +543,9 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                  "        matchLabels:\n" +
                  "          ns-zone-de-sensibilite: " + zds + "\n" +
                  "          ns-pf-role: iad\n" +
-                 "    - podSelector:\n" +
+                 "      podSelector:\n" +
                  "        matchLabels:\n" +
-                 "          pod-pf-role: iad\n"; 
+                 "          pod-pf-role: " + oneDS + "\n"; 
 
              generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_" + a4cds + "_policy", "a4c-" + oneDS + "-policy", 
                                        config, nsNodeName);
@@ -572,7 +572,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                  "        matchLabels:\n" +
                  "          ns-zone-de-sensibilite: " + zds + "\n" +
                  "          ns-pf-role: portail\n" +
-                 "    - podSelector:\n" +
+                 "      podSelector:\n" +
                  "       matchLabels:\n" +
                  "         pod-pf-role: rproxy\n" +
                  "    ports:\n";
@@ -603,7 +603,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                  "        matchLabels:\n" +
                  "          ns-zone-de-sensibilite: " + zds + "\n" +
                  "          ns-pf-role: portail\n" +
-                 "    - podSelector:\n" +
+                 "      podSelector:\n" +
                  "       matchLabels:\n" +
                  "         pod-pf-role: apigw\n"+
                  "    ports:\n";
