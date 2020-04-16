@@ -18,7 +18,7 @@
   </repositories>
 
   <scm>
-    <connection>scm:git:https://github.com/alien4cloud/alien4cloud-datagouv_mls-plugin.git</connection>
+    <connection>scm:git:https://github.com/alien4cloud/alien4cloud-ssi-network_policy-plugin.git</connection>
   </scm>
 
   <distributionManagement>
