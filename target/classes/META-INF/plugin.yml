@@ -1,6 +1,6 @@
 id: alien4cloud-ssi-network_policy-plugin
 name: SSI Network policy plugin
-version: 3.0.0-SNAPSHOT
+version: 3.0.0-M5
 description: >
   This plugin generates kubernetes network policies
 configuration_class: org.alien4cloud.plugin.ssi_network_policy.PluginConfiguration
