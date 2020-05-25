@@ -98,6 +98,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
             log.error("Exception ", e);
         } finally {
             WorkflowValidator.disableValidationThreadLocal.remove();
+            log.debug("Finished processing topology " + topology.getId());
         }
     }
 
@@ -227,6 +228,8 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
           } catch(IOException e) {
               log.error("Can't parse json: {}",e);
           }
+
+          log.debug ("Updated labels for node {}", node.getName());
        }
 
        /* process SparkJobs nodes */
@@ -263,6 +266,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                 addLabel2Job (topology, node, "access-ext-" + xDS, "false");
              }
           }
+          log.debug ("Updated labels for node {}", node.getName());
        }
 
        if ((namespace != null) && !namespace.trim().equals("") &&
@@ -548,7 +552,8 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                  "          pod-pf-role: " + oneDS + "\n"; 
 
              generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_" + a4cds + "_policy", "a4c-" + oneDS + "-policy", 
-                                       config, nsNodeName);
+                                       config, nsNodeName); 
+             log.debug ("set policy for datastore {}", oneDS);
           }
        }
 
@@ -671,6 +676,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                                     NormativeRelationshipConstants.DEPENDS_ON,
                                     "dependency",
                                     "feature");
+           log.debug ("adding relation {} -> {}", deploymentResourceNode.getName(), policyNodeName);
        }
 
        /* add relation to namespace node */
