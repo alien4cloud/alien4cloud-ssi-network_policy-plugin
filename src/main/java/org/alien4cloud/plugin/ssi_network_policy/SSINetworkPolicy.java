@@ -1,8 +1,12 @@
 package org.alien4cloud.plugin.ssi_network_policy;
 
+import alien4cloud.paas.wf.TopologyContext;
+import alien4cloud.paas.wf.WorkflowSimplifyService;
+import alien4cloud.paas.wf.WorkflowsBuilderService;
 import alien4cloud.paas.wf.validation.WorkflowValidator;
 import alien4cloud.tosca.context.ToscaContext;
 import alien4cloud.tosca.context.ToscaContextual;
+import alien4cloud.tosca.parser.ToscaParser;
 import static alien4cloud.utils.AlienUtils.safe;
 import alien4cloud.utils.PropertyUtil;
 
@@ -18,6 +22,7 @@ import org.alien4cloud.tosca.model.templates.RelationshipTemplate;
 import org.alien4cloud.tosca.model.templates.Requirement;
 import org.alien4cloud.tosca.model.templates.ServiceNodeTemplate;
 import org.alien4cloud.tosca.model.templates.Topology;
+import org.alien4cloud.tosca.model.types.AbstractToscaType;
 import org.alien4cloud.tosca.model.types.NodeType;
 import org.alien4cloud.tosca.model.types.RelationshipType;
 import org.alien4cloud.tosca.normative.constants.NormativeRelationshipConstants;
@@ -45,6 +50,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import lombok.extern.slf4j.Slf4j;
 
+import javax.inject.Inject;
+
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -58,6 +65,11 @@ import java.util.stream.Stream;
 @Slf4j
 @Component("ssi-network_policy-modifier")
 public class SSINetworkPolicy extends TopologyModifierSupport {
+
+    @Inject
+    private WorkflowSimplifyService workflowSimplifyService;
+    @Inject
+    private WorkflowsBuilderService workflowBuilderService;
 
     private final ObjectMapper mapper = new ObjectMapper();
 
@@ -89,20 +101,41 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
     @ToscaContextual
     public void process(Topology topology, FlowExecutionContext context) {
         log.info("Processing topology " + topology.getId());
-
         try {
             WorkflowValidator.disableValidationThreadLocal.set(true);
-            doProcess(topology, context);
+
+            boolean updated = doProcess(topology, context);
+
+            TopologyContext topologyContext = workflowBuilderService.buildCachedTopologyContext(new TopologyContext() {
+                @Override
+                public String getDSLVersion() {
+                    return ToscaParser.LATEST_DSL;
+                }
+
+                @Override
+                public Topology getTopology() {
+                    return topology;
+                }
+
+                @Override
+                public <T extends AbstractToscaType> T findElement(Class<T> clazz, String elementId) {
+                    return ToscaContext.get(clazz, elementId);
+                }
+            });
+
+            if (updated) {
+                workflowSimplifyService.simplifyWorkflow(topologyContext, topology.getWorkflows().keySet());
+            }
+
         } catch (Exception e) {
-            log.warn ("Couldn't process SSINetworkPolicy modifier, got " + e.getMessage());
-            log.error("Exception ", e);
+            log.warn ("Couldn't process SSINetworkPolicy modifier", e);
         } finally {
             WorkflowValidator.disableValidationThreadLocal.remove();
             log.debug("Finished processing topology " + topology.getId());
         }
     }
 
-    private void doProcess(Topology topology, FlowExecutionContext context) {
+    private boolean doProcess(Topology topology, FlowExecutionContext context) {
        Set<NodeTemplate> kubeNodes = TopologyNavigationUtil.getNodesOfType(topology, K8S_TYPES_DEPLOYMENT_RESOURCE, true);
 
        /* get info on namespace if any */
@@ -127,7 +160,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
        Set<NodeTemplate> kubeClusterNodes = TopologyNavigationUtil.getNodesOfType(init_topology, K8S_TYPES_KUBE_CLUSTER, false);
        if ((kubeClusterNodes == null) || kubeClusterNodes.isEmpty()) {
           log.info("Not a kubernetes appli, nothing to do.");
-          return;
+          return false;
        }
 
        /* get kube config for network policies */
@@ -275,6 +308,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                                    hasDs, allDS, hasIhm, hasApi, ihmPorts, apiPorts, 
                                    hasExternalDs, externalDSipAndPorts, kubeNS.getName());
        }
+       return true;
     }
 
     /**
