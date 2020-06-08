@@ -103,30 +103,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
         log.info("Processing topology " + topology.getId());
         try {
             WorkflowValidator.disableValidationThreadLocal.set(true);
-
-            boolean updated = doProcess(topology, context);
-
-            TopologyContext topologyContext = workflowBuilderService.buildCachedTopologyContext(new TopologyContext() {
-                @Override
-                public String getDSLVersion() {
-                    return ToscaParser.LATEST_DSL;
-                }
-
-                @Override
-                public Topology getTopology() {
-                    return topology;
-                }
-
-                @Override
-                public <T extends AbstractToscaType> T findElement(Class<T> clazz, String elementId) {
-                    return ToscaContext.get(clazz, elementId);
-                }
-            });
-
-            if (updated) {
-                workflowSimplifyService.simplifyWorkflow(topologyContext, topology.getWorkflows().keySet());
-            }
-
+            doProcess(topology, context);
         } catch (Exception e) {
             log.warn ("Couldn't process SSINetworkPolicy modifier", e);
         } finally {
