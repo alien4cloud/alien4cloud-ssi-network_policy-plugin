@@ -133,6 +133,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
 
        /* get initial topology */
        Topology init_topology = (Topology)context.getExecutionCache().get(FlowExecutionContext.INITIAL_TOPOLOGY);
+       ToscaContext.Context toscaContext = new ToscaContext.Context(init_topology.getDependencies());
 
        Set<NodeTemplate> kubeClusterNodes = TopologyNavigationUtil.getNodesOfType(init_topology, K8S_TYPES_KUBE_CLUSTER, false);
        if ((kubeClusterNodes == null) || kubeClusterNodes.isEmpty()) {
@@ -173,7 +174,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
           if (initialNode == null) {
              log.warn ("Can not find initial node for " + node.getName());
           } else {
-             nodeDS = usesDataStore (initialNode, init_topology);
+             nodeDS = usesDataStore (initialNode, init_topology,toscaContext);
              if (!nodeDS.isEmpty()) {
                 log.info (node.getName() + " uses datastore(s).");
                 hasDs = true;
@@ -195,7 +196,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
              }
              for (ImmutablePair<String,String> xdsPair : externalDataStoreTypes.values()) {
                 String xDS = xdsPair.getLeft();
-                nodeXDS = usesExternalDataSore (initialNode, init_topology, xDS);
+                nodeXDS = usesExternalDataSore (initialNode, init_topology, xDS,toscaContext);
                 if (!nodeXDS.isEmpty()) {
                    log.info (node.getName() + " uses " + xDS + " external datastore(s).");
                    hasExternalDs = true;
@@ -247,7 +248,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
        for (NodeTemplate node: safe(jobsNodes)) {
           log.info("Processing node " + node.getName());
 
-          Set<String> nodeDS = hasDerivedDataStoreRelationship (topology, node);
+          Set<String> nodeDS = hasDerivedDataStoreRelationship (topology, node,ToscaContext.get());
           if (!nodeDS.isEmpty()) {
              log.info (node.getName() + " uses datastore(s).");
              hasDs = true;
@@ -262,7 +263,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
           addLabel2Job (topology, node, "access-iam", "false");
           for (ImmutablePair<String,String> xdsPair : externalDataStoreTypes.values()) {
              String xDS = xdsPair.getLeft();
-             Set<ImmutablePair<String,String>> nodeXDS = hasExternalDataStoreRelationship(topology, node, xDS);
+             Set<ImmutablePair<String,String>> nodeXDS = hasExternalDataStoreRelationship(topology, node, xDS,toscaContext);
              if (!nodeXDS.isEmpty()) {
                 log.info (node.getName() + " uses " + xDS + " external datastore(s).");
                 hasExternalDs = true;
@@ -291,19 +292,18 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
     /**
      * tests whether given deployment node uses external datastore(s) or not
      **/
-    private Set<ImmutablePair<String,String>> usesExternalDataSore (NodeTemplate node, Topology init_topology, String xds) {
+    private Set<ImmutablePair<String,String>> usesExternalDataSore (NodeTemplate node, Topology init_topology, String xds,ToscaContext.Context toscaContext) {
        Set<ImmutablePair<String,String>> ds = new HashSet<ImmutablePair<String,String>>();
        /**
         * input node is KubeDeployment
         * look for KubeContainer node hostedOn this node
         * look for relationship connectsTo to external DS on this KubeContainer node
         **/
-       ToscaContext.Context toscaContext = new ToscaContext.Context(init_topology.getDependencies());
        Set<NodeTemplate> containerNodes = getNodesOfType(init_topology, K8S_TYPES_KUBECONTAINER, toscaContext);
        for (NodeTemplate containerNode : safe(containerNodes)) {
           NodeTemplate host = getImmediateHostTemplate(init_topology, containerNode, toscaContext);
           if (host == node) {
-             Set<ImmutablePair<String,String>> oneDs = hasExternalDataStoreRelationship(init_topology, containerNode, xds);
+             Set<ImmutablePair<String,String>> oneDs = hasExternalDataStoreRelationship(init_topology, containerNode, xds,toscaContext);
              if (!oneDs.isEmpty()) {
                 ds.addAll(oneDs);
              }
@@ -316,11 +316,10 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
      * tests whether given node has relationship to given external datastore or not,
      * if so return associated port and ip
      **/
-    private Set<ImmutablePair<String,String>> hasExternalDataStoreRelationship (Topology init_topology, NodeTemplate node, String xds) {
+    private Set<ImmutablePair<String,String>> hasExternalDataStoreRelationship (Topology init_topology, NodeTemplate node, String xds,ToscaContext.Context toscaContext) {
        Set<ImmutablePair<String,String>> ds = new HashSet<ImmutablePair<String,String>>();
 
        for (RelationshipTemplate relationshipTemplate : safe(node.getRelationships()).values()) {
-          ToscaContext.Context toscaContext = new ToscaContext.Context(init_topology.getDependencies());
           RelationshipType reltype = toscaContext.getElement(RelationshipType.class, relationshipTemplate.getType(), false);
           if (ToscaTypeUtils.isOfType (reltype, NormativeRelationshipConstants.CONNECTS_TO)) {
              NodeTemplate target = init_topology.getNodeTemplates().get(relationshipTemplate.getTarget());
@@ -356,19 +355,18 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
     /**
      * tests whether given deployment node uses datastore(s) or not
      **/
-    private Set<String> usesDataStore (NodeTemplate node, Topology init_topology) {
+    private Set<String> usesDataStore (NodeTemplate node, Topology init_topology,ToscaContext.Context toscaContext) {
        Set<String> ds = new HashSet<String>();
        /**
         * input node is KubeDeployment
         * look for KubeContainer node hostedOn this node
         * look for relationship datastores on this KubeContainer node
         **/
-       ToscaContext.Context toscaContext = new ToscaContext.Context(init_topology.getDependencies());
        Set<NodeTemplate> containerNodes = getNodesOfType(init_topology, K8S_TYPES_KUBECONTAINER, toscaContext);
        for (NodeTemplate containerNode : safe(containerNodes)) {
           NodeTemplate host = getImmediateHostTemplate(init_topology, containerNode, toscaContext);
           if (host == node) {
-             Set<String> oneDs = hasDerivedDataStoreRelationship(init_topology, containerNode);
+             Set<String> oneDs = hasDerivedDataStoreRelationship(init_topology, containerNode,toscaContext);
              if (!oneDs.isEmpty()) {
                 ds.addAll(oneDs);
              }
@@ -381,8 +379,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
      * tests whether given node has relationship derived from relationship to datastore or not, 
      * if so return associated keyword
      **/
-    private Set<String> hasDerivedDataStoreRelationship (Topology topology, NodeTemplate node) {
-       ToscaContext.Context toscaContext = new ToscaContext.Context(topology.getDependencies());
+    private Set<String> hasDerivedDataStoreRelationship (Topology topology, NodeTemplate node,ToscaContext.Context toscaContext) {
        Set<String> ds = new HashSet<String>();
        for (RelationshipTemplate relationshipTemplate : safe(node.getRelationships()).values()) {
           RelationshipType reltype = toscaContext.getElement(RelationshipType.class, relationshipTemplate.getType(), false);
