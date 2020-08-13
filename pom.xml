@@ -116,13 +116,13 @@
     </dependency>
     <dependency>
       <groupId>alien4cloud</groupId>
-      <artifactId>alien4cloud-consul-publisher</artifactId>
+      <artifactId>alien4cloud-k8s-spark-jobs</artifactId>
       <version>${project.version}</version>
       <scope>provided</scope>
     </dependency>
     <dependency>
       <groupId>alien4cloud</groupId>
-      <artifactId>alien4cloud-k8s-spark-jobs</artifactId>
+      <artifactId>alien4cloud-portal-plugin</artifactId>
       <version>${project.version}</version>
       <scope>provided</scope>
     </dependency>

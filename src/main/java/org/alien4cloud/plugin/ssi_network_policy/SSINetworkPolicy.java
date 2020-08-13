@@ -17,7 +17,6 @@ import org.alien4cloud.tosca.model.definitions.ComplexPropertyValue;
 import org.alien4cloud.tosca.model.definitions.ScalarPropertyValue;
 import org.alien4cloud.tosca.model.templates.Capability;
 import org.alien4cloud.tosca.model.templates.NodeTemplate;
-import org.alien4cloud.tosca.model.templates.PolicyTemplate;
 import org.alien4cloud.tosca.model.templates.RelationshipTemplate;
 import org.alien4cloud.tosca.model.templates.Requirement;
 import org.alien4cloud.tosca.model.templates.ServiceNodeTemplate;
@@ -30,8 +29,6 @@ import org.alien4cloud.tosca.utils.IRelationshipTypeFinder;
 import org.alien4cloud.tosca.utils.TopologyNavigationUtil;
 import org.alien4cloud.tosca.utils.ToscaTypeUtils;
 
-import static org.alien4cloud.plugin.consulpublisher.policies.ConsulPublisherPolicyConstants.CONSULPUBLISHER_POLICY1;
-import static org.alien4cloud.plugin.consulpublisher.policies.ConsulPublisherPolicyConstants.CONSULPUBLISHER_POLICY2;
 import static org.alien4cloud.plugin.kubernetes.csar.Version.K8S_CSAR_VERSION;
 import static org.alien4cloud.plugin.kubernetes.modifier.KubernetesAdapterModifier.A4C_KUBERNETES_ADAPTER_MODIFIER_TAG_REPLACEMENT_NODE_FOR;
 import static org.alien4cloud.plugin.kubernetes.modifier.KubernetesAdapterModifier.K8S_TYPES_KUBECONTAINER;
@@ -39,6 +36,7 @@ import static org.alien4cloud.plugin.kubernetes.modifier.KubernetesAdapterModifi
 import static org.alien4cloud.plugin.kubernetes.modifier.KubernetesAdapterModifier.NAMESPACE_RESOURCE_NAME;
 import static org.alien4cloud.plugin.kubernetes.modifier.KubeTopologyUtils.K8S_TYPES_DEPLOYMENT_RESOURCE;
 import static org.alien4cloud.plugin.kubernetes.modifier.KubeTopologyUtils.K8S_TYPES_SIMPLE_RESOURCE;
+import static org.alien4cloud.plugin.portal.PortalConstants.PROXIED_SERVICE;
 import static alien4cloud.plugin.k8s.spark.jobs.modifier.SparkJobsModifier.K8S_TYPES_SPARK_JOBS;
 
 import org.springframework.stereotype.Component;
@@ -144,9 +142,8 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
        /* get kube config for network policies */
        String k8sYamlConfig = (String)context.getExecutionCache().get(K8S_TYPES_KUBE_CLUSTER);
 
-       /* get consul publisher policies */
-       Set<PolicyTemplate> policiesIhm = TopologyNavigationUtil.getPoliciesOfType(init_topology, CONSULPUBLISHER_POLICY1, false);
-       Set<PolicyTemplate> policiesApi = TopologyNavigationUtil.getPoliciesOfType(init_topology, CONSULPUBLISHER_POLICY2, false);
+       /* get proxied services */
+       Set<NodeTemplate> services = TopologyNavigationUtil.getNodesOfType(init_topology, PROXIED_SERVICE, true);
 
        boolean hasDs = false,
                hasIhm = false,
@@ -180,14 +177,14 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                 hasDs = true;
                 allDS.addAll(nodeDS);
              }
-             Integer port = exposes(initialNode, init_topology, policiesIhm);
+             Integer port = exposes(initialNode, init_topology, services, "ihm");
              if (port.intValue() != -1) {
                 log.info (node.getName() + " exposes IHM.");
                 ihm = true;
                 hasIhm = true;
                 ihmPorts.add(port);
              }
-             port = exposes(initialNode, init_topology, policiesApi);
+             port = exposes(initialNode, init_topology, services, "api");
              if (port.intValue() != -1) {
                 log.info (node.getName() + " exposes API.");
                 api = true;
@@ -404,35 +401,51 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
     }
 
     /** 
-     * tests whether given node uses given policy or not
-     *  policy : target = service
+     * tests whether given deployment node needs IHM or API netpol, returns port if it does
      *  service : relationship connectsTo : container
      *  container : relationship hostedOn : deployment
      **/
-    private Integer exposes (NodeTemplate node, Topology topology, Set<PolicyTemplate> policies) {
-       for (PolicyTemplate policy : safe(policies)) {
-          for (NodeTemplate service : TopologyNavigationUtil.getTargetedMembers(topology, policy)) {
-             NodeTemplate container = getConnectsTo (topology, service);
-             NodeTemplate deployment = TopologyNavigationUtil.getImmediateHostTemplate(topology, container);
-             if (deployment == node) {
-                return getPort(service);
-             }
+    private Integer exposes (NodeTemplate node, Topology topology, Set<NodeTemplate> services, String serviceType) {
+       for (NodeTemplate service : safe(services)) {
+          /* get service type from service endpoint */
+          Capability endpoint = safe(service.getCapabilities()).get("service_endpoint");
+          if (endpoint == null) {
+             log.warn ("No service_endpoint for {}", service.getName());
+             continue;
+          }
+          if (!PropertyUtil.getScalarValue(safe(endpoint.getProperties()).get("service_type")).equals(serviceType))
+          {
+             continue;
+          }
+
+          NodeTemplate container = getConnectsTo (topology, service);
+          NodeTemplate deployment = TopologyNavigationUtil.getImmediateHostTemplate(topology, container);
+          if (deployment == node) {
+             return getPort(topology, service);
           }
        }
        return -1;
     }
 
-    private Integer getPort (NodeTemplate service) {
-       /* get port from capability properties of service */
+    private Integer getPort (Topology topology, NodeTemplate service) {
+       /* get port from capability properties of container */
        Integer port = new Integer(80);
-       Capability endpoint = safe(service.getCapabilities()).get("service_endpoint");
-       if (endpoint != null) {
-          String sport = PropertyUtil.getScalarValue(safe(endpoint.getProperties()).get("port"));
-          if (StringUtils.isNotEmpty(sport)) {
-             port = new Integer(sport);
-          }
+       String sport = getTargetCapabilityPropertyValue(topology, service, "expose", "port");
+       if (sport != null) {
+          port = Integer.valueOf(sport);
        }
        return port;
+    }
+
+    private String getTargetCapabilityPropertyValue(Topology topology, NodeTemplate node, String requirementName, String propertyPath) {
+        Set<RelationshipTemplate> rels = TopologyNavigationUtil.getTargetRelationships(node, requirementName);
+        if (rels.size() == 0) {
+            return null;
+        }
+        RelationshipTemplate rel = rels.iterator().next();
+        NodeTemplate targetNode = topology.getNodeTemplates().get(rel.getTarget());
+        Capability capability = targetNode.getCapabilities().get(rel.getTargetedCapabilityName());
+        return PropertyUtil.getScalarPropertyValueFromPath(capability.getProperties(), propertyPath);
     }
 
     /**
