@@ -74,6 +74,9 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
     private final String DATASTORE_RELATIONSHIP = "artemis.relationships.pub.ConnectsToDataStore";
     private final String RELATIONSHIP_TYPE_TO_EXPLORE = "org.alien4cloud.relationships.ConnectsToStaticEndpoint";
 
+    @Inject
+    private SSINetworkPolicyConfiguration conf;
+
     // known datastores
     private Map<String, ImmutablePair<String,String>> dataStoreTypes = Stream.of(new Object[][] { 
         //{ "artemis.redis.pub.capabilities.Redis", "redis", "redis_endpoint" }, 
@@ -146,11 +149,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
        Set<NodeTemplate> services = TopologyNavigationUtil.getNodesOfType(init_topology, PROXIED_SERVICE, true);
 
        boolean hasDs = false,
-               hasIhm = false,
-               hasApi = false,
                hasExternalDs = false;
-       List<Integer> ihmPorts = new ArrayList<Integer>();
-       List<Integer> apiPorts = new ArrayList<Integer>();
        Set<String> allDS = new HashSet<String>();
        Map<String, Set<ImmutablePair<String,String>>> externalDSipAndPorts = new HashMap<String, Set<ImmutablePair<String,String>>>();
 
@@ -177,19 +176,13 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                 hasDs = true;
                 allDS.addAll(nodeDS);
              }
-             Integer port = exposes(initialNode, init_topology, services, "ihm");
-             if (port.intValue() != -1) {
+             if (exposes(initialNode, init_topology, services, "ihm")) {
                 log.info (node.getName() + " exposes IHM.");
                 ihm = true;
-                hasIhm = true;
-                ihmPorts.add(port);
              }
-             port = exposes(initialNode, init_topology, services, "api");
-             if (port.intValue() != -1) {
+             if (exposes(initialNode, init_topology, services, "api")) {
                 log.info (node.getName() + " exposes API.");
                 api = true;
-                hasApi = true;
-                apiPorts.add(port);
              }
              for (ImmutablePair<String,String> xdsPair : externalDataStoreTypes.values()) {
                 String xDS = xdsPair.getLeft();
@@ -280,8 +273,10 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
        if ((namespace != null) && !namespace.trim().equals("") &&
            (zds != null) && !zds.trim().equals("") ) {
           generateNetworkPolicies (topology, namespace, zds, k8sYamlConfig, kubeNodes, 
-                                   hasDs, allDS, hasIhm, hasApi, ihmPorts, apiPorts, 
-                                   hasExternalDs, externalDSipAndPorts, kubeNS.getName());
+                                   hasDs, allDS, services, init_topology,
+                                   hasExternalDs, externalDSipAndPorts, kubeNS.getName(),
+                                   context.getEnvironmentContext().get().getApplication().getId() + "-" + 
+                                   context.getEnvironmentContext().get().getEnvironment().getName());
        }
        return true;
     }
@@ -401,11 +396,11 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
     }
 
     /** 
-     * tests whether given deployment node needs IHM or API netpol, returns port if it does
+     * tests whether given deployment node needs IHM or API netpol
      *  service : relationship connectsTo : container
      *  container : relationship hostedOn : deployment
      **/
-    private Integer exposes (NodeTemplate node, Topology topology, Set<NodeTemplate> services, String serviceType) {
+    private boolean exposes (NodeTemplate node, Topology topology, Set<NodeTemplate> services, String serviceType) {
        for (NodeTemplate service : safe(services)) {
           /* get service type from service endpoint */
           Capability endpoint = safe(service.getCapabilities()).get("service_endpoint");
@@ -421,20 +416,19 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
           NodeTemplate container = getConnectsTo (topology, service);
           NodeTemplate deployment = TopologyNavigationUtil.getImmediateHostTemplate(topology, container);
           if (deployment == node) {
-             return getPort(topology, service);
+             return true;
           }
        }
-       return -1;
+       return false;
     }
 
-    private Integer getPort (Topology topology, NodeTemplate service) {
+    private String getPort (Topology topology, NodeTemplate service) {
        /* get port from capability properties of container */
-       Integer port = new Integer(80);
        String sport = getTargetCapabilityPropertyValue(topology, service, "expose", "port");
-       if (sport != null) {
-          port = Integer.valueOf(sport);
+       if (sport == null) {
+          return "80";
        }
-       return port;
+       return sport;
     }
 
     private String getTargetCapabilityPropertyValue(Topology topology, NodeTemplate node, String requirementName, String propertyPath) {
@@ -484,10 +478,10 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
      * generate all required network policies for namespace 
      **/
     private void generateNetworkPolicies (Topology topology, String namespace, String zds, String config,
-                                          Set<NodeTemplate> deployNodes, boolean ds, Set<String> allDS, boolean ihm, boolean api,
-                                          List<Integer> ihmPorts, List<Integer> apiPorts, 
+                                          Set<NodeTemplate> deployNodes, boolean ds, Set<String> allDS,
+                                          Set<NodeTemplate> services, Topology init_topology,
                                           boolean xds, Map<String, Set<ImmutablePair<String,String>>> externalDS,
-                                          String nsNodeName) {
+                                          String nsNodeName, String appName) {
        String resource_spec = 
               "apiVersion: networking.k8s.io/v1\n" +
               "kind: NetworkPolicy\n" +
@@ -505,7 +499,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
               "        matchLabels:\n" +
               "          ns-clef-namespace: " + namespace;
        generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_default_in_policy", "a4c-default-in-policy", 
-                                 config, nsNodeName);
+                                 config, nsNodeName, namespace);
 
        resource_spec = 
               "apiVersion: networking.k8s.io/v1\n" +
@@ -524,7 +518,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
               "        matchLabels:\n" +
               "          ns-clef-namespace: " + namespace;
        generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_default_eg_policy", "a4c-default-eg-policy", 
-                                 config, nsNodeName);
+                                 config, nsNodeName, namespace);
        
        resource_spec = 
               "apiVersion: networking.k8s.io/v1\n" +
@@ -539,12 +533,18 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
               "  - from:\n" +
               "    - namespaceSelector:\n" +
               "        matchLabels:\n" +
-              "          ns-clef-namespace: kube-system\n" +
-              "  policyTypes:\n" +
-              "  - Ingress\n";
+              "          ns-clef-namespace: kube-system\n";
+       if ((conf.getK8sMasters() != null) && (conf.getK8sMasters().size() > 0)) {
+          resource_spec += "  - from:\n";
+          for (String k8sMaster : conf.getK8sMasters()) {
+             resource_spec += "    - ipBlock:\n" +
+              "        cidr: " + k8sMaster + "/32\n";
+          }
+       }
+       resource_spec += "  policyTypes:\n" +
+                        "  - Ingress\n";
        generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_kube_system_policy", "a4c-kube-system-policy", 
-                                 config, nsNodeName);
-
+                                 config, nsNodeName, namespace);
 
        if (ds) {
           for (String oneDS : allDS) {
@@ -573,23 +573,41 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                  "          pod-pf-role: " + oneDS + "\n"; 
 
              generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_" + a4cds + "_policy", "a4c-" + oneDS + "-policy", 
-                                       config, nsNodeName); 
+                                       config, nsNodeName, namespace); 
              log.debug ("set policy for datastore {}", oneDS);
           }
        }
 
-       if (ihm) {
+       for (NodeTemplate service : services) {
+          /* get service type from service endpoint */
+          Capability endpoint = safe(service.getCapabilities()).get("service_endpoint");
+          if (endpoint == null) {
+             log.warn ("No service_endpoint for {}", service.getName());
+             continue;
+          }
+          String service_type = PropertyUtil.getScalarValue(safe(endpoint.getProperties()).get("service_type"));
+          String pfxrole = "rproxy";
+          if (service_type.equals("api")) {
+             pfxrole = "apigw";
+          }
+
+          RelationshipTemplate relation = TopologyNavigationUtil.getRelationshipFromType(service, NormativeRelationshipConstants.CONNECTS_TO);
+          NodeTemplate module = init_topology.getNodeTemplates().get(relation.getTarget());
+
+          String k8sname = "-" + appName.toLowerCase() + "-" + module.getName().toLowerCase();
+          String a4cname = k8sname.replaceAll("-","_");
+
           resource_spec = 
                  "apiVersion: networking.k8s.io/v1\n" +
                  "kind: NetworkPolicy\n" +
                  "metadata:\n" +
-                 "  name: a4c-ihm-policy\n" +
+                 "  name: a4c-" + service_type + k8sname + "-policy\n" +
                  "  labels:\n" + 
-                 "    a4c_id: a4c-ihm-policy\n" + 
+                 "    a4c_id: a4c-" + service_type + k8sname + "-policy\n" + 
                  "spec:\n" +
                  "  podSelector:\n" +
                  "    matchLabels:\n" +
-                 "      expose-ihm: \"true\"\n" +
+                 "      expose-" + service_type + ": \"true\"\n" +
                  "  policyTypes:\n" +
                  "  - Ingress\n" +
                  "  ingress:\n" +
@@ -600,44 +618,10 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                  "          ns-pf-role: portail\n" +
                  "      podSelector:\n" +
                  "       matchLabels:\n" +
-                 "         pod-pf-role: rproxy\n" +
-                 "    ports:\n";
-          for (Integer port : ihmPorts) {
-             resource_spec += "       - port: " + port.toString() + "\n";
-          }
-
-          generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_ihm_policy", "a4c-ihm-policy", config, nsNodeName);
-       }
-
-       if (api) {
-          resource_spec = 
-                 "apiVersion: networking.k8s.io/v1\n" +
-                 "kind: NetworkPolicy\n" +
-                 "metadata:\n" +
-                 "  name: a4c-api-policy\n" +
-                 "  labels:\n" + 
-                 "    a4c_id: a4c-api-policy\n" + 
-                 "spec:\n" +
-                 "  podSelector:\n" +
-                 "    matchLabels:\n" +
-                 "      expose-api: \"true\"\n" +
-                 "  policyTypes:\n" +
-                 "  - Ingress\n" +
-                 "  ingress:\n" +
-                 "  - from:\n" +
-                 "    - namespaceSelector:\n" +
-                 "        matchLabels:\n" +
-                 "          ns-zone-de-sensibilite: " + zds + "\n" +
-                 "          ns-pf-role: portail\n" +
-                 "      podSelector:\n" +
-                 "       matchLabels:\n" +
-                 "         pod-pf-role: apigw\n"+
-                 "    ports:\n";
-          for (Integer port : apiPorts) {
-             resource_spec += "       - port: " + port.toString() + "\n";
-          }
-
-          generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_api_policy", "a4c-api-policy", config, nsNodeName);
+                 "         pod-pf-role: " + pfxrole + "-rp" + k8sname + "\n" +
+                 "    ports:\n" + 
+                 "       - port: " + getPort (init_topology, service) + "\n";
+          generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_" + service_type + a4cname + "_policy", "a4c-" + service_type + k8sname + "-policy", config, nsNodeName, namespace);
        }
 
        if (xds) {
@@ -668,7 +652,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                     "        - port: " + port + "\n";
 
                 generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_eg_ext_" + count + "_policy", "a4c-eg-ext-" + count + "-policy", 
-                                       config, nsNodeName);
+                                       config, nsNodeName, namespace);
              }
           }
        }
@@ -679,7 +663,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
      * generate a network policies for namespace 
      **/
     private void generateOneNetworkPolicy (Topology topology, Set<NodeTemplate> deployNodes, String resource_spec, String policyNodeName,
-                                           String policyName, String config, String nsNodeName) {
+                                           String policyName, String config, String nsNodeName, String namespace) {
        /* create SimpleResource with props resource_id, resource_type, resource_spec and kube_config */
        NodeTemplate polResourceNode = addNodeTemplate(null, topology, policyNodeName, K8S_TYPES_SIMPLE_RESOURCE, getK8SCsarVersion(topology));
 
@@ -687,6 +671,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
        setNodePropertyPathValue(null, topology, polResourceNode, "resource_type", new ScalarPropertyValue("networkpolicy"));
        setNodePropertyPathValue(null, topology, polResourceNode, "kube_config", new ScalarPropertyValue(config));
        setNodePropertyPathValue(null, topology, polResourceNode, "resource_spec", new ScalarPropertyValue(resource_spec));
+       setNodePropertyPathValue(null, topology, polResourceNode, "namespace", new ScalarPropertyValue(namespace));
 
        /* add relations */
        for (NodeTemplate deploymentResourceNode : safe(deployNodes)) {
