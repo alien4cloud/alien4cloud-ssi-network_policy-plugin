@@ -17,6 +17,7 @@ import org.alien4cloud.tosca.model.definitions.ComplexPropertyValue;
 import org.alien4cloud.tosca.model.definitions.ScalarPropertyValue;
 import org.alien4cloud.tosca.model.templates.Capability;
 import org.alien4cloud.tosca.model.templates.NodeTemplate;
+import org.alien4cloud.tosca.model.templates.PolicyTemplate;
 import org.alien4cloud.tosca.model.templates.RelationshipTemplate;
 import org.alien4cloud.tosca.model.templates.Requirement;
 import org.alien4cloud.tosca.model.templates.ServiceNodeTemplate;
@@ -29,6 +30,7 @@ import org.alien4cloud.tosca.utils.IRelationshipTypeFinder;
 import org.alien4cloud.tosca.utils.TopologyNavigationUtil;
 import org.alien4cloud.tosca.utils.ToscaTypeUtils;
 
+import static org.alien4cloud.plugin.k8s.webhook.policies.PolicyModifier.PSEUDORESOURCE_POLICY;
 import static org.alien4cloud.plugin.kubernetes.csar.Version.K8S_CSAR_VERSION;
 import static org.alien4cloud.plugin.kubernetes.modifier.KubernetesAdapterModifier.A4C_KUBERNETES_ADAPTER_MODIFIER_TAG_REPLACEMENT_NODE_FOR;
 import static org.alien4cloud.plugin.kubernetes.modifier.KubernetesAdapterModifier.K8S_TYPES_KUBECONTAINER;
@@ -546,6 +548,29 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
        generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_kube_system_policy", "a4c-kube-system-policy", 
                                  config, nsNodeName, namespace);
 
+       if (containsPseudoResources(init_topology) &&
+           (conf.getK8sMasters() != null) && (conf.getK8sMasters().size() > 0)) {
+          resource_spec = 
+                 "apiVersion: networking.k8s.io/v1\n" +
+                 "kind: NetworkPolicy\n" +
+                 "metadata:\n" +
+                 "  name: a4c-kube-api-policy\n" +
+                 "  labels:\n" +
+                 "    a4c_id: a4c-kube-api-policy\n" +
+                 "spec:\n" +
+                 "  podSelector: {}\n" +
+                 "  egress:\n" +
+                 "  - to:\n";
+          for (String k8sMaster : conf.getK8sMasters()) {
+             resource_spec += "    - ipBlock:\n" +
+              "        cidr: " + k8sMaster + "/32\n";
+          }
+          resource_spec += "  policyTypes:\n" +
+                           "  - Egress\n";
+          generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_kube_api_policy", "a4c-kube-api-policy", 
+                                    config, nsNodeName, namespace);
+       }
+
        if (ds) {
           for (String oneDS : allDS) {
              String a4cds = oneDS.replaceAll("-","_");
@@ -740,5 +765,16 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
         }
         return null;
     }
+
+   public boolean containsPseudoResources (Topology topology) {
+        /* get all PseudoResource policies targets on topology */
+        Set<String> pseudoResources = new HashSet<String>();
+        Set<PolicyTemplate> policies = TopologyNavigationUtil.getPoliciesOfType(topology, PSEUDORESOURCE_POLICY, true);
+        for (PolicyTemplate policy : policies) {
+           /* get all target nodes on current policy */
+           pseudoResources.addAll(safe(policy.getTargets()));
+        }
+        return (pseudoResources.size() > 0);
+   }
 
 }
