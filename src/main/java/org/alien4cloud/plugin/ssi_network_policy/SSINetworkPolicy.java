@@ -38,6 +38,7 @@ import static org.alien4cloud.plugin.kubernetes.modifier.KubernetesAdapterModifi
 import static org.alien4cloud.plugin.kubernetes.modifier.KubernetesAdapterModifier.NAMESPACE_RESOURCE_NAME;
 import static org.alien4cloud.plugin.kubernetes.modifier.KubeTopologyUtils.K8S_TYPES_DEPLOYMENT_RESOURCE;
 import static org.alien4cloud.plugin.kubernetes.modifier.KubeTopologyUtils.K8S_TYPES_SIMPLE_RESOURCE;
+import static org.alien4cloud.plugin.portal.PortalConstants.IAM_TYPE;
 import static org.alien4cloud.plugin.portal.PortalConstants.PROXIED_SERVICE;
 import static alien4cloud.plugin.k8s.spark.jobs.modifier.SparkJobsModifier.K8S_TYPES_SPARK_JOBS;
 
@@ -151,7 +152,8 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
        Set<NodeTemplate> services = TopologyNavigationUtil.getNodesOfType(init_topology, PROXIED_SERVICE, true);
 
        boolean hasDs = false,
-               hasExternalDs = false;
+               hasExternalDs = false,
+               hasIAM = false;
        Set<String> allDS = new HashSet<String>();
        Map<String, Set<ImmutablePair<String,String>>> externalDSipAndPorts = new HashMap<String, Set<ImmutablePair<String,String>>>();
 
@@ -160,7 +162,8 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
           log.info("Processing node " + node.getName());
 
           boolean ihm = false,
-                  api = false;
+                  api = false,
+                  iam = false;
           Set<String> nodeDS = new HashSet<String>();
           Set<String> nodeXDSnames = new HashSet<String>();
           Set<ImmutablePair<String,String>> nodeXDS = new HashSet<ImmutablePair<String,String>>();
@@ -185,6 +188,11 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
              if (exposes(initialNode, init_topology, services, "api")) {
                 log.info (node.getName() + " exposes API.");
                 api = true;
+             }
+             if (isConnectedToIAM (initialNode, init_topology, toscaContext)) {
+                log.info (node.getName() + " is connected to IAM.");
+                iam = true;
+                hasIAM = true;
              }
              for (ImmutablePair<String,String> xdsPair : externalDataStoreTypes.values()) {
                 String xDS = xdsPair.getLeft();
@@ -212,7 +220,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
               for (String ds : nodeDS) {
                  addLabel (spec, ds, "true");
               }
-              addLabel (spec, "access-iam", "false");
+              addLabel (spec, "access-iam", Boolean.toString(iam));
               for (ImmutablePair<String,String> xdsPair : externalDataStoreTypes.values()) {
                  String xDS = xdsPair.getLeft();
                  if (nodeXDSnames.contains(xDS)) {
@@ -277,12 +285,37 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
        if ((namespace != null) && !namespace.trim().equals("") &&
            (zds != null) && !zds.trim().equals("") ) {
           generateNetworkPolicies (topology, namespace, zds, k8sYamlConfig, kubeNodes, 
-                                   hasDs, allDS, needsApi, services, init_topology,
+                                   hasDs, allDS, needsApi, hasIAM, services, init_topology,
                                    hasExternalDs, externalDSipAndPorts, kubeNS.getName(),
                                    context.getEnvironmentContext().get().getApplication().getId() + "-" + 
                                    context.getEnvironmentContext().get().getEnvironment().getName());
        }
        return true;
+    }
+
+   /**
+     * tests whether given deployment is connected to an IAM node or not
+     **/
+    private boolean isConnectedToIAM (NodeTemplate node, Topology init_topology, ToscaContext.Context toscaContext) {
+       /**
+        * input node is KubeDeployment
+        * look for KubeContainer node hostedOn this node
+        * look for relationship to IAM type on this KubeContainer node
+        **/
+       Set<NodeTemplate> containerNodes = getNodesOfType(init_topology, K8S_TYPES_KUBECONTAINER, toscaContext);
+       for (NodeTemplate containerNode : safe(containerNodes)) {
+          NodeTemplate host = getImmediateHostTemplate(init_topology, containerNode, toscaContext);
+          if (host == node) {
+             for (RelationshipTemplate relationshipTemplate : safe(containerNode.getRelationships()).values()) {
+                NodeTemplate target = init_topology.getNodeTemplates().get(relationshipTemplate.getTarget());
+                NodeType nodeType = toscaContext.getElement(NodeType.class, target.getType(), false);
+                if (nodeType.getElementId().equals(IAM_TYPE)) {
+                   return true;
+                }
+             }
+          }
+       }
+       return false;
     }
 
     /**
@@ -483,7 +516,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
      **/
     private void generateNetworkPolicies (Topology topology, String namespace, String zds, String config,
                                           Set<NodeTemplate> deployNodes, boolean ds, Set<String> allDS,
-                                          boolean needsApi, Set<NodeTemplate> services, Topology init_topology,
+                                          boolean needsApi, boolean iam, Set<NodeTemplate> services, Topology init_topology,
                                           boolean xds, Map<String, Set<ImmutablePair<String,String>>> externalDS,
                                           String nsNodeName, String appName) {
        String resource_spec = 
@@ -569,6 +602,33 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
           resource_spec += "  policyTypes:\n" +
                            "  - Egress\n";
           generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_kube_api_policy", "a4c-kube-api-policy", 
+                                    config, nsNodeName, namespace);
+       }
+
+       if (iam) {
+          resource_spec = 
+               "apiVersion: networking.k8s.io/v1\n" +
+               "kind: NetworkPolicy\n" +
+               "metadata:\n" +
+               "  name: a4c-iam-policy\n" +
+               "  labels:\n" +
+               "    a4c_id: a4c-iam-policy\n" +
+               "spec:\n" +
+               "  podSelector:\n" +
+               "    matchLabels:\n" +
+               "      access-iam: \"true\"\n" +
+               "  policyTypes:\n" +
+               "  - Egress\n" +
+               "  egress:\n" +
+               "  - to:\n" +
+               "    - namespaceSelector:\n" +
+               "        matchLabels:\n" +
+               "          ns-zone-de-sensibilite: " + zds + "\n" +
+               "          ns-pf-role: portail\n" +
+               "    - podSelector:\n" +
+               "        matchLabels:\n" +
+               "          pod-pf-role: iam\n";
+          generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_iam_policy", "a4c-iam-policy", 
                                     config, nsNodeName, namespace);
        }
 
