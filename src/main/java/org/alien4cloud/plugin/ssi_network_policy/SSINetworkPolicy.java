@@ -272,10 +272,12 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
           log.debug ("Updated labels for node {}", node.getName());
        }
 
+       boolean needsApi = containsPseudoResources(init_topology) || !jobsNodes.isEmpty();
+
        if ((namespace != null) && !namespace.trim().equals("") &&
            (zds != null) && !zds.trim().equals("") ) {
           generateNetworkPolicies (topology, namespace, zds, k8sYamlConfig, kubeNodes, 
-                                   hasDs, allDS, services, init_topology,
+                                   hasDs, allDS, needsApi, services, init_topology,
                                    hasExternalDs, externalDSipAndPorts, kubeNS.getName(),
                                    context.getEnvironmentContext().get().getApplication().getId() + "-" + 
                                    context.getEnvironmentContext().get().getEnvironment().getName());
@@ -481,7 +483,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
      **/
     private void generateNetworkPolicies (Topology topology, String namespace, String zds, String config,
                                           Set<NodeTemplate> deployNodes, boolean ds, Set<String> allDS,
-                                          Set<NodeTemplate> services, Topology init_topology,
+                                          boolean needsApi, Set<NodeTemplate> services, Topology init_topology,
                                           boolean xds, Map<String, Set<ImmutablePair<String,String>>> externalDS,
                                           String nsNodeName, String appName) {
        String resource_spec = 
@@ -548,8 +550,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
        generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_kube_system_policy", "a4c-kube-system-policy", 
                                  config, nsNodeName, namespace);
 
-       if (containsPseudoResources(init_topology) &&
-           (conf.getK8sMasters() != null) && (conf.getK8sMasters().size() > 0)) {
+       if (needsApi && (conf.getK8sMasters() != null) && (conf.getK8sMasters().size() > 0)) {
           resource_spec = 
                  "apiVersion: networking.k8s.io/v1\n" +
                  "kind: NetworkPolicy\n" +
