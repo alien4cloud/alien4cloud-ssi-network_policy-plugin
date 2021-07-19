@@ -91,7 +91,9 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
         { "artemis.elasticsearch.pub.capabilities.ElasticSearchRestAPI", "elastic", "http" },
         { "artemis.kafka.pub.capabilities.KafkaTopic", "kafka", "kafka_topic" },
         { "artemis.hadoop.pub.capabilities.HdfsRepository", "hdfs", "hdfs_repository" },
-        { "artemis.ceph.pub.capabilities.CephBucketEndpoint", "ceph", "http" }
+        { "artemis.ceph.pub.capabilities.CephBucketEndpoint", "ceph", "http" },
+        { "artemis.kudu.pub.capabilities.KuduEndpoint", "kudu", "kudu_endpoint" },
+        { "artemis.impala.pub.capabilities.ImpalaEndpoint", "impala", "impala_endpoint" }
     }).collect(Collectors.toMap(data -> (String) data[0], data -> new ImmutablePair<String,String>((String) data[1], (String) data[2])));
 
     // external datastores
