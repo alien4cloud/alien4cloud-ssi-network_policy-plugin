@@ -53,6 +53,7 @@ import lombok.extern.slf4j.Slf4j;
 
 import javax.inject.Inject;
 
+import java.net.InetAddress;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -102,6 +103,10 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
         { "artemis.gitlab.pub.nodes.GitlabService", "gitlab", "gitlab_endpoint" }
     }).collect(Collectors.toMap(data -> (String) data[0], data -> new ImmutablePair<String,String>((String) data[1], (String) data[2])));
 
+    // external datastores with multiple IPs
+    private Map<String, String> multiIPExternalDataStoreTypes = Stream.of(new Object[][] {
+        { "artemis.janusgraph.pub.nodes.JanusGraphService", "janusgraph" }
+    }).collect(Collectors.toMap(data -> (String) data[0], data -> (String) data[1]));
 
     @Override
     @ToscaContextual
@@ -168,6 +173,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                   iam = false;
           Set<String> nodeDS = new HashSet<String>();
           Set<String> nodeXDSnames = new HashSet<String>();
+          Set<String> nodeMipXDSnames = new HashSet<String>();
           Set<ImmutablePair<String,String>> nodeXDS = new HashSet<ImmutablePair<String,String>>();
 
           /* look for node in initial topology */
@@ -198,7 +204,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
              }
              for (ImmutablePair<String,String> xdsPair : externalDataStoreTypes.values()) {
                 String xDS = xdsPair.getLeft();
-                nodeXDS = usesExternalDataSore (initialNode, init_topology, xDS,toscaContext);
+                nodeXDS = usesExternalDataSore (initialNode, init_topology, xDS, toscaContext, context, zds);
                 if (!nodeXDS.isEmpty()) {
                    log.info (node.getName() + " uses " + xDS + " external datastore(s).");
                    hasExternalDs = true;
@@ -207,6 +213,24 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                       externalDSipAndPorts.put(xDS, nodeXDS);
                    } else {
                       externalDSipAndPorts.get(xDS).addAll(nodeXDS);
+                   }
+                }
+             }
+             for (String xdsType : multiIPExternalDataStoreTypes.keySet()) {
+                Set<NodeTemplate> dsNodes = getNodesOfType(init_topology, xdsType, toscaContext);
+                for (NodeTemplate dsNode : dsNodes) {
+                   nodeXDS = usesExternalDataSore (initialNode, init_topology, dsNode, toscaContext, context, zds);
+                   if (!nodeXDS.isEmpty()) {
+                      Capability endpoint = safe(dsNode.getCapabilities()).get(multiIPExternalDataStoreTypes.get(xdsType));
+                      String xDS = "default";
+                      if (endpoint != null) {
+                         xDS = PropertyUtil.getScalarValue(safe(endpoint.getProperties()).get("artemis_instance_name"));
+                      }
+                      log.info (node.getName() + " uses " + xDS + " external datastore(s).");
+                      hasExternalDs = true;
+                      nodeXDSnames.add(xDS);
+                      nodeMipXDSnames.add(xDS);
+                      externalDSipAndPorts.put(xDS, nodeXDS);
                    }
                 }
              }
@@ -230,6 +254,9 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                  } else {
                     addLabel (spec, "access-ext-" + xDS, "false");
                  }
+              }
+              for (String xDS : nodeMipXDSnames) {
+                 addLabel (spec, "access-ext-" + xDS, "true");
               }
 
               if ((zds != null) && !zds.trim().equals("")) {
@@ -265,7 +292,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
           addLabel2Job (topology, node, "access-iam", "false");
           for (ImmutablePair<String,String> xdsPair : externalDataStoreTypes.values()) {
              String xDS = xdsPair.getLeft();
-             Set<ImmutablePair<String,String>> nodeXDS = hasExternalDataStoreRelationship(topology, node, xDS,toscaContext);
+             Set<ImmutablePair<String,String>> nodeXDS = hasExternalDataStoreRelationship(topology, node, xDS, toscaContext, context, zds);
              if (!nodeXDS.isEmpty()) {
                 log.info (node.getName() + " uses " + xDS + " external datastore(s).");
                 hasExternalDs = true;
@@ -277,6 +304,23 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                 addLabel2Job (topology, node, "access-ext-" + xDS, "true");
              } else {
                 addLabel2Job (topology, node, "access-ext-" + xDS, "false");
+             }
+          }
+          for (String xdsType : multiIPExternalDataStoreTypes.keySet()) {
+             Set<NodeTemplate> dsNodes = getNodesOfType(init_topology, xdsType, toscaContext);
+             for (NodeTemplate dsNode : dsNodes) {
+                Set<ImmutablePair<String,String>> nodeXDS = hasExternalDataStoreRelationship(topology, node, dsNode, toscaContext, context, zds);
+                if (!nodeXDS.isEmpty()) {
+                   Capability endpoint = safe(dsNode.getCapabilities()).get(multiIPExternalDataStoreTypes.get(xdsType));
+                   String xDS = "default";
+                   if (endpoint != null) {
+                      xDS = PropertyUtil.getScalarValue(safe(endpoint.getProperties()).get("artemis_instance_name"));
+                   }
+                   log.info (node.getName() + " uses " + xDS + " external datastore(s).");
+                   hasExternalDs = true;
+                   externalDSipAndPorts.put(xDS, nodeXDS);
+                   addLabel2Job (topology, node, "access-ext-" + xDS, "true");
+                }
              }
           }
           log.debug ("Updated labels for node {}", node.getName());
@@ -323,7 +367,8 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
     /**
      * tests whether given deployment node uses external datastore(s) or not
      **/
-    private Set<ImmutablePair<String,String>> usesExternalDataSore (NodeTemplate node, Topology init_topology, String xds,ToscaContext.Context toscaContext) {
+    private Set<ImmutablePair<String,String>> usesExternalDataSore (NodeTemplate node, Topology init_topology, String xds, ToscaContext.Context toscaContext,
+                                                                    FlowExecutionContext context, String zds) {
        Set<ImmutablePair<String,String>> ds = new HashSet<ImmutablePair<String,String>>();
        /**
         * input node is KubeDeployment
@@ -334,7 +379,28 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
        for (NodeTemplate containerNode : safe(containerNodes)) {
           NodeTemplate host = getImmediateHostTemplate(init_topology, containerNode, toscaContext);
           if (host == node) {
-             Set<ImmutablePair<String,String>> oneDs = hasExternalDataStoreRelationship(init_topology, containerNode, xds,toscaContext);
+             Set<ImmutablePair<String,String>> oneDs = hasExternalDataStoreRelationship(init_topology, containerNode, xds, toscaContext, context, zds);
+             if (!oneDs.isEmpty()) {
+                ds.addAll(oneDs);
+             }
+          }
+       }
+       return ds;
+    }
+
+    private Set<ImmutablePair<String,String>> usesExternalDataSore (NodeTemplate node, Topology init_topology, NodeTemplate xds, ToscaContext.Context toscaContext, 
+                                                                    FlowExecutionContext context, String zds) {
+       Set<ImmutablePair<String,String>> ds = new HashSet<ImmutablePair<String,String>>();
+       /**
+        * input node is KubeDeployment
+        * look for KubeContainer node hostedOn this node
+        * look for relationship connectsTo to external DS on this KubeContainer node
+        **/
+       Set<NodeTemplate> containerNodes = getNodesOfType(init_topology, K8S_TYPES_KUBECONTAINER, toscaContext);
+       for (NodeTemplate containerNode : safe(containerNodes)) {
+          NodeTemplate host = getImmediateHostTemplate(init_topology, containerNode, toscaContext);
+          if (host == node) {
+             Set<ImmutablePair<String,String>> oneDs = hasExternalDataStoreRelationship(init_topology, containerNode, xds, toscaContext, context, zds);
              if (!oneDs.isEmpty()) {
                 ds.addAll(oneDs);
              }
@@ -347,7 +413,8 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
      * tests whether given node has relationship to given external datastore or not,
      * if so return associated port and ip
      **/
-    private Set<ImmutablePair<String,String>> hasExternalDataStoreRelationship (Topology init_topology, NodeTemplate node, String xds,ToscaContext.Context toscaContext) {
+    private Set<ImmutablePair<String,String>> hasExternalDataStoreRelationship (Topology init_topology, NodeTemplate node, String xds, ToscaContext.Context toscaContext,
+                                                                                FlowExecutionContext context, String zds) {
        Set<ImmutablePair<String,String>> ds = new HashSet<ImmutablePair<String,String>>();
 
        for (RelationshipTemplate relationshipTemplate : safe(node.getRelationships()).values()) {
@@ -374,9 +441,62 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                 if (StringUtils.isEmpty(ip)) {
                    ip = "127.0.0.1";
                 }
-                ip = ip + "/32";
+                try {
+                   InetAddress in = InetAddress.getByName(ip.trim().replaceAll("<zone>", zds));
+                   String sip = in.getHostAddress();
+                   log.debug ("Resolving {} to {}", ip.trim().replaceAll("<zone>", zds), sip);
+                   sip = sip + "/32";
+                   ds.add(new ImmutablePair<String, String> (sip, port));
+                } catch(Exception e) {
+                   context.log().error("Can not resolve host name: {} for service {}: {}", ip, target.getName(), e.getMessage());
+                   log.error("Can not resolve host name: {} for service {}: {}", ip, target.getName(), e.getMessage());
+                }
+             }
+          }
+       }
+       return ds;
+    }
 
-                ds.add(new ImmutablePair<String, String> (ip, port));
+    private Set<ImmutablePair<String,String>> hasExternalDataStoreRelationship (Topology init_topology, NodeTemplate node, NodeTemplate xds, ToscaContext.Context toscaContext, 
+                                                                                FlowExecutionContext context, String zds) {
+       Set<ImmutablePair<String,String>> ds = new HashSet<ImmutablePair<String,String>>();
+
+       for (RelationshipTemplate relationshipTemplate : safe(node.getRelationships()).values()) {
+          RelationshipType reltype = toscaContext.getElement(RelationshipType.class, relationshipTemplate.getType(), false);
+          if (ToscaTypeUtils.isOfType (reltype, NormativeRelationshipConstants.CONNECTS_TO)) {
+             NodeTemplate target = init_topology.getNodeTemplates().get(relationshipTemplate.getTarget());
+             String val = multiIPExternalDataStoreTypes.get(target.getType());
+             if ((val != null) && (target.getName().equals(xds.getName()))) {
+                String ip = null;
+                String port = "80";
+                if (target instanceof ServiceNodeTemplate) {
+                   ServiceNodeTemplate serviceNodeTemplate = (ServiceNodeTemplate)target;
+                   ip = safe(serviceNodeTemplate.getAttributeValues()).get("capabilities." + val + ".ip_address");
+
+                   /* get port from capability properties of service */
+                   Capability endpoint = safe(serviceNodeTemplate.getCapabilities()).get(val);
+                   if (endpoint != null) {
+                      String pport = PropertyUtil.getScalarValue(safe(endpoint.getProperties()).get("port"));
+                      if (StringUtils.isNotEmpty(pport)) {
+                         port = pport;
+                      }
+                   }
+                }
+                if (StringUtils.isEmpty(ip)) {
+                   ip = "127.0.0.1";
+                }
+                for (String oneIp : ip.split(";|,")) {
+                   try {
+                      InetAddress in = InetAddress.getByName(oneIp.trim().replaceAll("<zone>", zds));
+                      String sip = in.getHostAddress();
+                      log.debug ("Resolving {} to {}", oneIp.trim().replaceAll("<zone>", zds), sip);
+                      sip = sip + "/32";
+                      ds.add(new ImmutablePair<String, String> (sip, port));
+                   } catch(Exception e) {
+                      context.log().error("Can not resolve host name: {} for service {}: {}", oneIp, xds.getName(), e.getMessage());
+                      log.error("Can not resolve host name: {} for service {}: {}", oneIp, xds.getName(), e.getMessage());
+                   }
+                }
              }
           }
        }
