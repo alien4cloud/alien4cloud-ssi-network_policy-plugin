@@ -328,12 +328,10 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
           log.debug ("Updated labels for node {}", node.getName());
        }
 
-       boolean needsApi = containsPseudoResources(init_topology) || !jobsNodes.isEmpty();
-
        if ((namespace != null) && !namespace.trim().equals("") &&
            (zds != null) && !zds.trim().equals("") ) {
           generateNetworkPolicies (topology, namespace, zds, k8sYamlConfig, kubeNodes, 
-                                   hasDs, allDS, needsApi, hasIAM, ihmServices, apiServices, init_topology,
+                                   hasDs, allDS, hasIAM, ihmServices, apiServices, init_topology,
                                    hasExternalDs, externalDSipAndPorts, kubeNS.getName(),
                                    context.getEnvironmentContext().get().getApplication().getId() + "-" + 
                                    context.getEnvironmentContext().get().getEnvironment().getName(), context);
@@ -629,7 +627,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
      **/
     private void generateNetworkPolicies (Topology topology, String namespace, String zds, String config,
                                           Set<NodeTemplate> deployNodes, boolean ds, Set<String> allDS,
-                                          boolean needsApi, boolean iam, Set<NodeTemplate> ihmServices, 
+                                          boolean iam, Set<NodeTemplate> ihmServices, 
                                           Set<NodeTemplate> apiServices, Topology init_topology,
                                           boolean xds, Map<String, Set<ImmutablePair<String,String>>> externalDS,
                                           String nsNodeName, String appName, FlowExecutionContext context) {
@@ -723,28 +721,6 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                         "  - Egress\n";
        generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_kube_system_policy", "a4c-kube-system-policy", 
                                  config, nsNodeName, namespace);
-
-       if (needsApi && (conf.getK8sMasters() != null) && (conf.getK8sMasters().size() > 0)) {
-          resource_spec = 
-                 "apiVersion: networking.k8s.io/v1\n" +
-                 "kind: NetworkPolicy\n" +
-                 "metadata:\n" +
-                 "  name: a4c-kube-api-policy\n" +
-                 "  labels:\n" +
-                 "    a4c_id: a4c-kube-api-policy\n" +
-                 "spec:\n" +
-                 "  podSelector: {}\n" +
-                 "  egress:\n" +
-                 "  - to:\n";
-          for (String k8sMaster : conf.getK8sMasters()) {
-             resource_spec += "    - ipBlock:\n" +
-              "        cidr: " + k8sMaster + "/32\n";
-          }
-          resource_spec += "  policyTypes:\n" +
-                           "  - Egress\n";
-          generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_kube_api_policy", "a4c-kube-api-policy", 
-                                    config, nsNodeName, namespace);
-       }
 
        if (iam) {
           resource_spec = 
