@@ -16,4 +16,5 @@ import java.util.List;
 @ConfigurationProperties(prefix = "alien4cloud-ssi-network_policy-plugin")
 public class SSINetworkPolicyConfiguration {
    private List<String> k8sMasters;
+   private List<String> k8sMastersIPs;
 }

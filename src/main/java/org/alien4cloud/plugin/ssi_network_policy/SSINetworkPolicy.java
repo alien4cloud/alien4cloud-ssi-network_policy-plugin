@@ -336,7 +336,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                                    hasDs, allDS, needsApi, hasIAM, ihmServices, apiServices, init_topology,
                                    hasExternalDs, externalDSipAndPorts, kubeNS.getName(),
                                    context.getEnvironmentContext().get().getApplication().getId() + "-" + 
-                                   context.getEnvironmentContext().get().getEnvironment().getName());
+                                   context.getEnvironmentContext().get().getEnvironment().getName(), context);
        }
        return true;
     }
@@ -632,7 +632,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                                           boolean needsApi, boolean iam, Set<NodeTemplate> ihmServices, 
                                           Set<NodeTemplate> apiServices, Topology init_topology,
                                           boolean xds, Map<String, Set<ImmutablePair<String,String>>> externalDS,
-                                          String nsNodeName, String appName) {
+                                          String nsNodeName, String appName, FlowExecutionContext context) {
        String resource_spec = 
               "apiVersion: networking.k8s.io/v1\n" +
               "kind: NetworkPolicy\n" +
@@ -671,6 +671,22 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
        generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_default_eg_policy", "a4c-default-eg-policy", 
                                  config, nsNodeName, namespace);
        
+       if ((conf.getK8sMastersIPs() == null) &&
+            (conf.getK8sMasters() != null) && (conf.getK8sMasters().size() > 0)) {
+          conf.setK8sMastersIPs(new ArrayList<String>());
+          for (String k8sMaster : conf.getK8sMasters()) {
+             try {
+                InetAddress in = InetAddress.getByName(k8sMaster);
+                String sip = in.getHostAddress();
+                log.debug ("Resolving {} to {}", k8sMaster, sip);
+                conf.getK8sMastersIPs().add(sip);
+             } catch(Exception e) {
+                context.log().error("Can not resolve host name: {} : {}", k8sMaster, e.getMessage());
+                log.error("Can not resolve host name: {}: {}", k8sMaster, e.getMessage());
+             }
+          }
+       }
+
        resource_spec = 
               "apiVersion: networking.k8s.io/v1\n" +
               "kind: NetworkPolicy\n" +
@@ -685,8 +701,8 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
               "    - namespaceSelector:\n" +
               "        matchLabels:\n" +
               "          ns-clef-namespace: kube-system\n";
-       if ((conf.getK8sMasters() != null) && (conf.getK8sMasters().size() > 0)) {
-          for (String k8sMaster : conf.getK8sMasters()) {
+       if ((conf.getK8sMastersIPs() != null) && (conf.getK8sMastersIPs().size() > 0)) {
+          for (String k8sMaster : conf.getK8sMastersIPs()) {
              resource_spec += "    - ipBlock:\n" +
               "        cidr: " + k8sMaster + "/32\n";
           }
@@ -695,8 +711,14 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                         "  - to:\n" +
                         "    - namespaceSelector:\n" +
                         "        matchLabels:\n" +
-                        "          ns-clef-namespace: kube-system\n" +
-                        "  policyTypes:\n" +
+                        "          ns-clef-namespace: kube-system\n";
+       if ((conf.getK8sMastersIPs() != null) && (conf.getK8sMastersIPs().size() > 0)) {
+          for (String k8sMaster : conf.getK8sMastersIPs()) {
+             resource_spec += "    - ipBlock:\n" +
+              "        cidr: " + k8sMaster + "/32\n";
+          }
+       }
+       resource_spec += "  policyTypes:\n" +
                         "  - Ingress\n" + 
                         "  - Egress\n";
        generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_kube_system_policy", "a4c-kube-system-policy", 
