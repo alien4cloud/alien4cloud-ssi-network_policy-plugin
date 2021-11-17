@@ -57,6 +57,7 @@ import javax.inject.Inject;
 import java.net.InetAddress;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -95,8 +96,17 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
         { "artemis.hadoop.pub.capabilities.HdfsRepository", "hdfs", "hdfs_repository" },
         { "artemis.ceph.pub.capabilities.CephBucketEndpoint", "ceph", "http" },
         { "artemis.kudu.pub.capabilities.KuduEndpoint", "kudu", "kudu_endpoint" },
-        { "artemis.impala.pub.capabilities.ImpalaEndpoint", "impala", "impala_endpoint" }
+        { "artemis.impala.pub.capabilities.ImpalaEndpoint", "impala", "impala_endpoint" },
+        { "artemis.atlas.pub.capabilities.AtlasService", "apigw", "atlas_endpoint" }
     }).collect(Collectors.toMap(data -> (String) data[0], data -> new ImmutablePair<String,String>((String) data[1], (String) data[2])));
+
+    // datastores related to ApiGW instead of IAD
+    private Set<String> usesApiGwEgress = new HashSet<>(Arrays.asList("artemis.atlas.pub.capabilities.AtlasService"));
+
+    // ns-pf-role for datastores (default is iad)
+    private Map<String,String> nspfroles = Stream.of(new Object[][] {
+       { "apigw", "portail"}
+    }).collect(Collectors.toMap(data -> (String) data[0], data -> (String) data[1]));
 
     // external datastores
     private Map<String, ImmutablePair<String,String>> externalDataStoreTypes = Stream.of(new Object[][] {
@@ -547,7 +557,11 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                    instname = PropertyUtil.getScalarValue(safe(endpoint.getProperties()).get("artemis_instance_name"));
                 }
 
-                ds.add(access + "--" + instname);
+                if (usesApiGwEgress.contains(relationshipTemplate.getRequirementType())) {
+                   ds.add("apigw");
+                } else {
+                   ds.add(access + "--" + instname);
+                }
              }
           }
        }
@@ -752,6 +766,10 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
        if (ds) {
           for (String oneDS : allDS) {
              String a4cds = oneDS.replaceAll("-","_");
+             String nspfrole = nspfroles.get(oneDS);
+             if (nspfrole == null) { 
+                nspfrole = "iad";
+             }
              resource_spec = 
                  "apiVersion: networking.k8s.io/v1\n" +
                  "kind: NetworkPolicy\n" +
@@ -770,7 +788,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                  "    - namespaceSelector:\n" +
                  "        matchLabels:\n" +
                  "          ns-zone-de-sensibilite: " + zds + "\n" +
-                 "          ns-pf-role: iad\n" +
+                 "          ns-pf-role: " + nspfrole + "\n" +
                  "      podSelector:\n" +
                  "        matchLabels:\n" +
                  "          pod-pf-role: " + oneDS + "\n"; 
@@ -827,9 +845,9 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                  "apiVersion: networking.k8s.io/v1\n" +
                  "kind: NetworkPolicy\n" +
                  "metadata:\n" +
-                 "  name: a4c-apigw-policy\n" +
+                 "  name: a4c-apigwin-policy\n" +
                  "  labels:\n" + 
-                 "    a4c_id: a4c-apigw-policy\n" + 
+                 "    a4c_id: a4c-apigwin-policy\n" + 
                  "spec:\n" +
                  "  podSelector:\n" +
                  "    matchLabels:\n" +
@@ -849,7 +867,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
           for (String port : ports) {
               resource_spec += "       - port: " + port + "\n";
           }
-          generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_apigw_policy", "a4c-apigw-policy", config, nsNodeName, namespace);
+          generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_apigwin_policy", "a4c-apigwin-policy", config, nsNodeName, namespace);
        }
 
        if (xds) {
