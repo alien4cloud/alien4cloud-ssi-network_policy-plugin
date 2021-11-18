@@ -651,7 +651,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
               "metadata:\n" +
               "  name: a4c-default-in-policy\n" +
               "  labels:\n" + 
-              "    a4c_id: a4c-default-in-policy\n" + 
+              "    a4c_id: a4c-netpols\n" + 
               "spec:\n" +
               "  podSelector: {}\n" +
               "  policyTypes:\n" +
@@ -660,17 +660,17 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
               "  - from:\n" +
               "    - namespaceSelector:\n" +
               "        matchLabels:\n" +
-              "          ns-clef-namespace: " + namespace;
-       generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_default_in_policy", "a4c-default-in-policy", 
-                                 config, nsNodeName, namespace);
+              "          ns-clef-namespace: " + namespace + "\n";
+       //generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_default_in_policy", "a4c-default-in-policy", 
+       //                          config, nsNodeName, namespace);
 
-       resource_spec = 
+       resource_spec += "---\n" +  
               "apiVersion: networking.k8s.io/v1\n" +
               "kind: NetworkPolicy\n" +
               "metadata:\n" +
               "  name: a4c-default-eg-policy\n" +
               "  labels:\n" + 
-              "    a4c_id: a4c-default-eg-policy\n" + 
+              "    a4c_id: a4c-netpols\n" + 
               "spec:\n" +
               "  podSelector: {}\n" +
               "  policyTypes:\n" +
@@ -679,9 +679,9 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
               "  - to:\n" +
               "    - namespaceSelector:\n" +
               "        matchLabels:\n" +
-              "          ns-clef-namespace: " + namespace;
-       generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_default_eg_policy", "a4c-default-eg-policy", 
-                                 config, nsNodeName, namespace);
+              "          ns-clef-namespace: " + namespace + "\n";
+       //generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_default_eg_policy", "a4c-default-eg-policy", 
+       //                          config, nsNodeName, namespace);
        
        if ((conf.getK8sMastersIPs() == null) &&
             (conf.getK8sMasters() != null) && (conf.getK8sMasters().size() > 0)) {
@@ -699,13 +699,13 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
           }
        }
 
-       resource_spec = 
+       resource_spec += "---\n" + 
               "apiVersion: networking.k8s.io/v1\n" +
               "kind: NetworkPolicy\n" +
               "metadata:\n" +
               "  name: a4c-kube-system-policy\n" +
               "  labels:\n" +
-              "    a4c_id: a4c-kube-system-policy\n" +
+              "    a4c_id: a4c-netpols\n" + 
               "spec:\n" +
               "  podSelector: {}\n" +
               "  ingress:\n" +
@@ -733,17 +733,17 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
        resource_spec += "  policyTypes:\n" +
                         "  - Ingress\n" + 
                         "  - Egress\n";
-       generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_kube_system_policy", "a4c-kube-system-policy", 
-                                 config, nsNodeName, namespace);
+       //generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_kube_system_policy", "a4c-kube-system-policy", 
+       //                          config, nsNodeName, namespace);
 
        if (iam) {
-          resource_spec = 
+          resource_spec += "---\n" + 
                "apiVersion: networking.k8s.io/v1\n" +
                "kind: NetworkPolicy\n" +
                "metadata:\n" +
                "  name: a4c-iam-policy\n" +
                "  labels:\n" +
-               "    a4c_id: a4c-iam-policy\n" +
+               "    a4c_id: a4c-netpols\n" + 
                "spec:\n" +
                "  podSelector:\n" +
                "    matchLabels:\n" +
@@ -759,8 +759,8 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                "    - podSelector:\n" +
                "        matchLabels:\n" +
                "          pod-pf-role: iam\n";
-          generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_iam_policy", "a4c-iam-policy", 
-                                    config, nsNodeName, namespace);
+          //generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_iam_policy", "a4c-iam-policy", 
+          //                          config, nsNodeName, namespace);
        }
 
        if (ds) {
@@ -770,13 +770,13 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
              if (nspfrole == null) { 
                 nspfrole = "iad";
              }
-             resource_spec = 
+             resource_spec += "---\n" + 
                  "apiVersion: networking.k8s.io/v1\n" +
                  "kind: NetworkPolicy\n" +
                  "metadata:\n" +
                  "  name: a4c-" + oneDS + "-policy\n" +
                  "  labels:\n" + 
-                 "    a4c_id: a4c-" + oneDS + "-policy\n" + 
+                 "    a4c_id: a4c-netpols\n" + 
                  "spec:\n" +
                  "  podSelector:\n" +
                  "    matchLabels:\n" +
@@ -793,8 +793,8 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                  "        matchLabels:\n" +
                  "          pod-pf-role: " + oneDS + "\n"; 
 
-             generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_" + a4cds + "_policy", "a4c-" + oneDS + "-policy", 
-                                       config, nsNodeName, namespace); 
+             //generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_" + a4cds + "_policy", "a4c-" + oneDS + "-policy", 
+             //                          config, nsNodeName, namespace); 
              log.debug ("set policy for datastore {}", oneDS);
           }
        }
@@ -806,13 +806,13 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
           String k8sname = "-" + appName.toLowerCase() + "-" + module.getName().toLowerCase();
           String a4cname = k8sname.replaceAll("-","_");
 
-          resource_spec = 
+          resource_spec += "---\n" + 
                  "apiVersion: networking.k8s.io/v1\n" +
                  "kind: NetworkPolicy\n" +
                  "metadata:\n" +
                  "  name: a4c-ihm" + k8sname + "-policy\n" +
                  "  labels:\n" + 
-                 "    a4c_id: a4c-ihm" + k8sname + "-policy\n" + 
+                 "    a4c_id: a4c-netpols\n" + 
                  "spec:\n" +
                  "  podSelector:\n" +
                  "    matchLabels:\n" +
@@ -830,7 +830,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                  "         pod-pf-role: rproxy-rp" + k8sname + "\n" +
                  "    ports:\n" + 
                  "       - port: " + getPort (init_topology, service) + "\n";
-          generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_ihm" + a4cname + "_policy", "a4c-ihm" + k8sname + "-policy", config, nsNodeName, namespace);
+          // generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_ihm" + a4cname + "_policy", "a4c-ihm" + k8sname + "-policy", config, nsNodeName, namespace);
        }
 
        Set<String> ports = new HashSet<String>();
@@ -841,13 +841,13 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
        }
 
        if (!ports.isEmpty()) {
-          resource_spec = 
+          resource_spec += "---\n" + 
                  "apiVersion: networking.k8s.io/v1\n" +
                  "kind: NetworkPolicy\n" +
                  "metadata:\n" +
                  "  name: a4c-apigwin-policy\n" +
                  "  labels:\n" + 
-                 "    a4c_id: a4c-apigwin-policy\n" + 
+                 "    a4c_id: a4c-netpols\n" + 
                  "spec:\n" +
                  "  podSelector:\n" +
                  "    matchLabels:\n" +
@@ -867,7 +867,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
           for (String port : ports) {
               resource_spec += "       - port: " + port + "\n";
           }
-          generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_apigwin_policy", "a4c-apigwin-policy", config, nsNodeName, namespace);
+          // generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_apigwin_policy", "a4c-apigwin-policy", config, nsNodeName, namespace);
        }
 
        if (xds) {
@@ -877,13 +877,13 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                 count++;
                 String ip = ipAndPort.getLeft();
                 String port = ipAndPort.getRight();
-                resource_spec = 
+                resource_spec += "---\n" + 
                     "apiVersion: networking.k8s.io/v1\n" +
                     "kind: NetworkPolicy\n" +
                     "metadata:\n" +
                     "  name: a4c-eg-ext-" + count + "-policy\n" +
                     "  labels:\n" + 
-                    "    a4c_id: a4c-eg-ext-" + count + "-policy\n" + 
+                    "    a4c_id: a4c-netpols\n" + 
                     "spec:\n" +
                     "  podSelector:\n" +
                     "    matchLabels:\n" +
@@ -897,11 +897,14 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                     "    ports:\n" +
                     "        - port: " + port + "\n";
 
-                generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_eg_ext_" + count + "_policy", "a4c-eg-ext-" + count + "-policy", 
-                                       config, nsNodeName, namespace);
+                //generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_eg_ext_" + count + "_policy", "a4c-eg-ext-" + count + "-policy", 
+                //                       config, nsNodeName, namespace);
              }
           }
        }
+       generateOneNetworkPolicy (topology, deployNodes, resource_spec, "a4c_netpols", "a4c-netpols", 
+                                 config, nsNodeName, namespace);
+       
 
     }
 
