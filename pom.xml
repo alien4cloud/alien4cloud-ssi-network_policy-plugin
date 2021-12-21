@@ -76,7 +76,6 @@
     <metrics-spring.version>3.0.1</metrics-spring.version>
 
     <!-- Logging -->
-    <log4j.version>2.8.2</log4j.version>
     <slf4j.version>1.7.24</slf4j.version>
 
     <!-- Documentation -->
