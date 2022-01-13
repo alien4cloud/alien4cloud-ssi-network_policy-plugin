@@ -209,7 +209,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
                 log.info (node.getName() + " exposes API.");
                 api = true;
              }
-             if (isConnectedToIAM (initialNode, init_topology, toscaContext)) {
+             if (needsIAM (initialNode, init_topology, toscaContext)) {
                 log.info (node.getName() + " is connected to IAM.");
                 iam = true;
                 hasIAM = true;
@@ -350,13 +350,13 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
     }
 
    /**
-     * tests whether given deployment is connected to an IAM node or not
+     * tests whether given deployment needs access to IAM or not
      **/
-    private boolean isConnectedToIAM (NodeTemplate node, Topology init_topology, ToscaContext.Context toscaContext) {
+    private boolean needsIAM (NodeTemplate node, Topology init_topology, ToscaContext.Context toscaContext) {
        /**
         * input node is KubeDeployment
         * look for KubeContainer node hostedOn this node
-        * look for relationship to IAM type on this KubeContainer node
+        * look for relationship to IAM type or with type which uses API GW on this KubeContainer node
         **/
        Set<NodeTemplate> containerNodes = getNodesOfType(init_topology, K8S_TYPES_KUBECONTAINER, toscaContext);
        for (NodeTemplate containerNode : safe(containerNodes)) {
@@ -365,7 +365,8 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
              for (RelationshipTemplate relationshipTemplate : safe(containerNode.getRelationships()).values()) {
                 NodeTemplate target = init_topology.getNodeTemplates().get(relationshipTemplate.getTarget());
                 NodeType nodeType = toscaContext.getElement(NodeType.class, target.getType(), false);
-                if (nodeType.getElementId().equals(IAM_TYPE)) {
+                if (nodeType.getElementId().equals(IAM_TYPE) ||
+                    usesApiGwEgress.contains(relationshipTemplate.getRequirementType())) {
                    return true;
                 }
              }
