@@ -98,12 +98,12 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
         { "artemis.kudu.pub.capabilities.KuduEndpoint", "kudu", "kudu_endpoint" },
         { "artemis.impala.pub.capabilities.ImpalaEndpoint", "impala", "impala_endpoint" },
         { "artemis.atlas.pub.capabilities.AtlasService", "apigw", "atlas_endpoint" },
-        { "artemis.apigateway.pub.capabilities.ApiGatewayService", "apigw", "apigateway_endpoint" }
+        { "artemis.apigateway.pub.capabilities.ApiGatewayRouteEndpoint", "apigw", "apigatewayroute_endpoint" }
     }).collect(Collectors.toMap(data -> (String) data[0], data -> new ImmutablePair<String,String>((String) data[1], (String) data[2])));
 
     // datastores related to ApiGW instead of IAD
     private Set<String> usesApiGwEgress = new HashSet<>(Arrays.asList("artemis.atlas.pub.capabilities.AtlasService",
-                                                                      "artemis.apigateway.pub.capabilities.ApiGatewayService"));
+                                                                      "artemis.apigateway.pub.capabilities.ApiGatewayRouteEndpoint"));
 
     // ns-pf-role for datastores (default is iad)
     private Map<String,String> nspfroles = Stream.of(new Object[][] {
