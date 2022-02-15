@@ -808,6 +808,7 @@ public class SSINetworkPolicy extends TopologyModifierSupport {
 
           String k8sname = "-" + appName.toLowerCase() + "-" + module.getName().toLowerCase();
           String a4cname = k8sname.replaceAll("-","_");
+          k8sname = k8sname.replaceAll("_","-");
 
           resource_spec += "---\n" + 
                  "apiVersion: networking.k8s.io/v1\n" +
